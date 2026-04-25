@@ -1,6 +1,6 @@
 [![License: LGPL v3](https://img.shields.io/badge/License-LGPL%20v3-blue.svg)](https://www.gnu.org/licenses/lgpl-3.0)
 [![Donate](https://img.shields.io/badge/Donate-PayPal-green.svg)](https://paypal.me/GabrieleMencagli)
-![MoStream Logo](https://raw.githubusercontent.com/ParaGroup/MoStream/main/Logo/mostream.png)
+![MoStream Logo](https://raw.githubusercontent.com/ParaGroup/MoStream/main/Logo/mostream_small.png)
 
 # MoStream
 
