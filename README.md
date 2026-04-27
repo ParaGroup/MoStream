@@ -172,6 +172,7 @@ for a single input:
 ```mojo
 from MoStream import Emitter
 
+@fieldwise_init
 struct Duplicate(StageTrait):
     comptime kind = StageKind.TRANSFORM_MANY
     comptime InType = Int
