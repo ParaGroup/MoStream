@@ -72,7 +72,7 @@ export MOSTREAM_HOME="$PWD"
 Then run one of the included examples:
 
 ```sh
-mojo Tests/test_pipe_1.mojo
+mojo -O3 -I. Tests/test_pipe_1.mojo
 ```
 
 If `MOSTREAM_HOME` is not set, MoStream falls back to the current directory.
@@ -100,6 +100,7 @@ struct NumberSource(StageTrait):
         self.next = self.next + 1
         return value
 
+@fieldwise_init
 struct AddOne(StageTrait):
     comptime kind = StageKind.TRANSFORM
     comptime InType = Int
@@ -109,6 +110,7 @@ struct AddOne(StageTrait):
     def compute(mut self, var input: Int) -> Optional[Int]:
         return input + 1
 
+@fieldwise_init
 struct PrintSink(StageTrait):
     comptime kind = StageKind.SINK
     comptime InType = Int
