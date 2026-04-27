@@ -206,7 +206,7 @@ async runtime parallelism.
 
 ### Queue Size
 
-MoStream currently adopt just one communicator type. This uses bounded MPMC queues
+MoStream currently adopts just one communicator type. This uses bounded MPMC queues
 between stages. The default queue size is `1024`. Queue sizes must be powers of two
 and at least `2`.
 
@@ -231,7 +231,7 @@ export MOSTREAM_PINNING="0,2,4,6"
 
 ## Benchmarks
 
-The image benchmark demonstrates a deeper stream-processing graph:
+The image benchmark demonstrates a deeper stream-processing pipeline:
 
 ```text
 TimedImageSource -> Grayscale -> GaussianBlur -> Sharpen -> ImageSink
