@@ -18,7 +18,9 @@ from MoStream.MPMC_queue import MPMCQueue
 from MoStream.actor import ActorStatus
 from MoStream.pipeline import Pinning
 from MoStream.node import NodeTrait, SeqNode, ParallelNode
+from MoStream.utils import print_red_color
 from std.runtime.asyncrt import create_task, TaskGroup, parallelism_level
+from std.sys.terminate import exit
 
 # ActorDescriptor
 struct ActorDescriptor(ImplicitlyCopyable):
@@ -202,8 +204,10 @@ struct Scheduler[*Ts: NodeTrait]:
     # put the actor in the BLOCKING_INPUT state or mark it ready if already available
     def park_on_input_or_ready(mut self, mut nodes: Tuple[*Self.Ts], actor: ActorDescriptor):
         if actor.stage_idx == 0: # it runs a source
-            self.mark_ready(actor)
-            return
+            #self.mark_ready(actor)
+            print_red_color("{MoStream} Error: source actor cannot block on input!")
+            exit(1)
+            #return
         var comm_idx = self.input_wait_queue_idx(actor)
         var expected = ActorStatus.RUNNING
         if not self.actor_states[actor.flat_id].compare_exchange[

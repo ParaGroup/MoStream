@@ -94,7 +94,7 @@ struct Communicator[T: MessageTrait](Movable):
 
     # check whether the Communicator can be safely destroyed
     def check_isDestroyable(mut self) -> Bool:
-        old_count = self.destroyCount[].fetch_sub[ordering=Ordering.SEQUENTIAL](1)
+        old_count = self.destroyCount[].fetch_sub[ordering=Ordering.ACQUIRE_RELEASE](1)
         return old_count == Int64(1)
 
     # push (continuous retry until a message has been successfully pushed)
