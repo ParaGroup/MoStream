@@ -20,11 +20,9 @@
 #   - FourthStage: sink counting the total sum of all received inputs
 
 from std.collections import Optional
-from MoStream.communicator import MessageTrait
-from MoStream.stage import StageKind, StageTrait
-from MoStream.node import NodeTrait, SeqNode, ParallelNode, seq, parallel
-from MoStream.emitter import Emitter
-from MoStream.pipeline import Pipeline
+from MoStream import StageKind, StageTrait
+from MoStream import seq, parallel
+from MoStream import Pipeline
 
 # FirstStage - Source: generetes numbers from 1 to 1000
 struct FirstStage(StageTrait):
@@ -34,7 +32,7 @@ struct FirstStage(StageTrait):
     comptime name = "FirstStage"
     var count: Int
 
-    # costructor
+    # constructor
     def __init__ (out self):
         self.count = 0
 
@@ -53,7 +51,7 @@ struct SecondStage(StageTrait):
     comptime OutType = Int
     comptime name = "SecondStage"
 
-    # costrutor
+    # constructor
     def __init__ (out self):
         pass
 
@@ -68,12 +66,12 @@ struct ThirdStage(StageTrait):
     comptime OutType = Int
     comptime name = "ThirdStage"
 
-    # costrutor
+    # constructor
     def __init__ (out self):
         pass
 
     # compute implementation
-    def compute(mut self, var input: Int) raises -> Int:
+    def compute(mut self, var input: Int) -> Int:
         return input
 
 # FourthStage - prints the input string
@@ -106,7 +104,7 @@ def main():
     # creating the pipeline and running it
     try:
         pipeline = Pipeline((seq(first_stage), parallel(second_stage, 2), parallel(third_stage, 3), seq(fourth_stage)))
-        pipeline.setPinning(enabled=False)
+        pipeline.setPinning(enabled=False)        
         pipeline.run()
     except e:
         print("Execution failed:", e)

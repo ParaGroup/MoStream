@@ -13,16 +13,17 @@
 #  Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
 # ===------------------------------------------------------------------------=== #
 
-# Second test of a pipeline with 3 stages:
+# Third test of a pipeline with 4 stages using the cooperative runtime:
 #   - FirstStage: source generating numbers from 1 to 1000
-#   - SecondStage: stage producing two strings for each input number: "Value <number+1>" and "Value <(number+1)*2>"
-#   - ThirdStage: sink printing each input string received
+#   - SecondStage: parallel stage forwarding the received number
+#   - ThirdStage: parallel stage forwarding the received number
+#   - FourthStage: sink counting the total sum of all received inputs
 
 from std.collections import Optional
 from MoStream import StageKind, StageTrait
 from MoStream import seq, parallel
-from MoStream import Emitter
 from MoStream import Pipeline
+from std.sys import argv
 
 # FirstStage - Source: generetes numbers from 1 to 1000
 struct FirstStage(StageTrait):
@@ -38,17 +39,17 @@ struct FirstStage(StageTrait):
 
     # next_element implementation
     def next_element(mut self) -> Optional[Int]:
-        if self.count > 1000:
+        if self.count >= 1000:
             return None
         else:
             self.count = self.count + 1
             return self.count
 
-# SecondStage - increaments the input, converts it to a string, adn emit it two times
+# SecondStage - forward the received number
 struct SecondStage(StageTrait):
-    comptime kind = StageKind.TRANSFORM_MANY
+    comptime kind = StageKind.TRANSFORM
     comptime InType = Int
-    comptime OutType = String
+    comptime OutType = Int
     comptime name = "SecondStage"
 
     # constructor
@@ -56,36 +57,61 @@ struct SecondStage(StageTrait):
         pass
 
     # compute implementation
-    def compute_many(mut self, var input: Int, mut emitter: Emitter[String]) -> None:
-        input = input + 1
-        emitter.emit(String("Value " + String(input)))
-        emitter.emit(String("Value " + String(input * 2)))
+    def compute(mut self, var input: Int) -> Int:
+        return input
 
-# ThirdStage - prints the input string
+# ThirdStage - forward the received number
 struct ThirdStage(StageTrait):
-    comptime kind = StageKind.SINK
-    comptime InType = String
-    comptime OutType = String
+    comptime kind = StageKind.TRANSFORM
+    comptime InType = Int
+    comptime OutType = Int
     comptime name = "ThirdStage"
 
     # constructor
     def __init__ (out self):
         pass
 
+    # compute implementation
+    def compute(mut self, var input: Int) -> Int:
+        return input
+
+# FourthStage - prints the input string
+struct FourthStage(StageTrait):
+    comptime kind = StageKind.SINK
+    comptime InType = Int
+    comptime OutType = Int
+    comptime name = "FourthStage"
+    var sum: Int
+
+    # constructor
+    def __init__ (out self):
+        self.sum = 0
+
     # consume_element implementation
-    def consume_element(mut self, var input: String) -> None:
-        print(input)
+    def consume_element(mut self, var input: Int) -> None:
+        self.sum = self.sum + input
+
+    # receive_eof implementation
+    def received_eos(mut self):
+        print("Total sum: ", self.sum)
 
 # Main
 def main():
+    var args = argv()
+    if len(args) != 2:
+        print("Usage: ./test_pipe_4 <n_workers>")
+        print("  n_workers = number of workers used by the cooperative scheduler")
+        return
     # creating the stages
     first_stage = FirstStage()
     second_stage = SecondStage()
     third_stage = ThirdStage()
+    fourth_stage = FourthStage()
     # creating the pipeline and running it
     try:
-        pipeline = Pipeline((seq(first_stage), seq(second_stage), seq(third_stage)))
-        pipeline.setPinning(enabled=False)
-        pipeline.run()
+        var n_workers = Int(args[1])
+        pipeline = Pipeline((seq(first_stage), parallel(second_stage, 2), parallel(third_stage, 3), seq(fourth_stage)))
+        pipeline.setPinning(enabled=False)        
+        pipeline.run_cooperative(n_workers)
     except e:
         print("Execution failed:", e)

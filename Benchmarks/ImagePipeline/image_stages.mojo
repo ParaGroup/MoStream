@@ -13,8 +13,7 @@
 #  Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
 # ===------------------------------------------------------------------------=== #
 
-from MoStream.communicator import MessageTrait
-from MoStream.stage import StageKind, StageTrait
+from MoStream import StageKind, StageTrait
 from ppm_image import PPMImage
 from std.time import perf_counter_ns
 
@@ -36,7 +35,7 @@ struct TimedImageSource[ImgW: Int, ImgH: Int, DurationSec: Int = 60](StageTrait)
         self.start_ns = 0
         self.started = False
 
-    # generate next element or EOS
+    # next_element implementation
     def next_element(mut self) -> Optional[PPMImage]:
         if not self.started:
             self.start_ns = perf_counter_ns()
@@ -64,7 +63,7 @@ struct Grayscale(StageTrait):
         self.compute_time_ns = 0
         self.count = 0
 
-    # compute grayscale image from input color image
+    # compute implementation
     def compute(mut self, var input: PPMImage) -> Optional[PPMImage]:
         var t0 = perf_counter_ns()
         comptime CHUNK = 8
@@ -133,7 +132,7 @@ struct GaussianBlur(StageTrait):
                 s += wt * Int((ch + yy * w + xx).load())
         return UInt8(s >> 4)
 
-    # compute blurred image from input image
+    # compute implementation
     def compute(mut self, var input: PPMImage) -> Optional[PPMImage]:
         var t0 = perf_counter_ns()
         comptime CHUNK = 8
@@ -241,7 +240,8 @@ struct Sharpen(StageTrait):
 
     # compute sharpened image from input image
     @always_inline
-    def sharpen_plane(self, ch_in:  UnsafePointer[mut=True, UInt8, _], ch_out: UnsafePointer[mut=True, UInt8, _], w: Int, h: Int):
+    def sharpen_plane(self, ch_in:  UnsafePointer[mut=True, UInt8, _],
+                      ch_out: UnsafePointer[mut=True, UInt8, _], w: Int, h: Int):
         comptime CHUNK = 8
         # interior points
         for y in range(1, h - 1):
@@ -277,7 +277,7 @@ struct Sharpen(StageTrait):
             (ch_out + y * w        ).store(self.border_pixel(ch_in, 0,     y, w, h))
             (ch_out + y * w + w - 1).store(self.border_pixel(ch_in, w - 1, y, w, h))
 
-    # compute sharpened image from input image
+    # compute implementation
     def compute(mut self, var input: PPMImage) -> Optional[PPMImage]:
         var t0 = perf_counter_ns()
         var w = input.width; var h = input.height
@@ -315,7 +315,7 @@ struct ImageSink(StageTrait):
         self.count_ptr = alloc[Int](1)
         self.count_ptr[] = 0
 
-    # consume received image by updating count and checksum
+    # consume_element implementation
     def consume_element(mut self, var input: PPMImage):
         if self.count == 0: self.start_ns = perf_counter_ns()
         self.count += 1

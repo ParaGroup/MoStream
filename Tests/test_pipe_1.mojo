@@ -19,10 +19,9 @@
 #   - ThirdStage: sink printing each input string received
 
 from std.collections import Optional
-from MoStream.communicator import MessageTrait
-from MoStream.stage import StageKind, StageTrait
-from MoStream.node import NodeTrait, SeqNode, ParallelNode, seq, parallel
-from MoStream.pipeline import Pipeline
+from MoStream import StageKind, StageTrait
+from MoStream import seq, parallel
+from MoStream import Pipeline
 
 # FirstStage - Source: generetes numbers from 1 to 1000
 struct FirstStage(StageTrait):
@@ -32,7 +31,7 @@ struct FirstStage(StageTrait):
     comptime name = "FirstStage"
     var count: Int
 
-    # costructor
+    # constructor
     def __init__ (out self):
         self.count = 0
 
@@ -51,7 +50,7 @@ struct SecondStage(StageTrait):
     comptime OutType = String
     comptime name = "SecondStage"
 
-    # costrutor
+    # constructor
     def __init__ (out self):
         pass
 

@@ -16,7 +16,7 @@
 from std.memory import memcpy, memset
 
 # A simple PPM image class with planar RGB data layout (Struct of Arrays)
-struct PPMImage(ImplicitlyCopyable, Writable, Defaultable):
+struct PPMImage(ImplicitlyCopyable):
     var width: Int
     var height: Int
     var data_ptr: UnsafePointer[UInt8, MutExternalOrigin]  # W*H*3 bytes, planar

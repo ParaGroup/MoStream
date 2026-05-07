@@ -26,7 +26,7 @@ struct StageKind:
     comptime NOTDEFINED: Int = 4
 
 # Generic trait of stages in the pipeline, with default implementations that raise errors if not overridden
-trait StageTrait(ImplicitlyCopyable):
+trait StageTrait(Copyable & ImplicitlyDestructible):
     comptime kind = StageKind.NOTDEFINED
     comptime InType: MessageTrait
     comptime OutType: MessageTrait
@@ -35,22 +35,22 @@ trait StageTrait(ImplicitlyCopyable):
     # next_element (stage SOURCE)
     #   generate the next element of the stream, returns an Optional containing the element if generated successfully, or None if the stream has ended
     def next_element(mut self) raises -> Optional[Self.OutType]:
-        raise String("Error: Stage ") + String(Self.name) + String(" does not implement the next_element() method!")
+        raise String("stage ") + String(Self.name) + String(" does not implement the next_element() method")
 
     # compute (stage TRANSFORM)
     #   generate one or zero output elements for the input element
     def compute(mut self, var input: Self.InType) raises -> Optional[Self.OutType]:
-        raise String("Error: Stage ") + String(Self.name) + String(" does not implement the compute() method!")
+        raise String("stage ") + String(Self.name) + String(" does not implement the compute() method")
 
     # compute_many (stage TRANSFORM_MANY)
     #   generate one, zero or more output elements for the input element
     def compute_many(mut self, var input: Self.InType, mut e: Emitter[Self.OutType]) raises:
-        raise String("Error: Stage ") + String(Self.name) + String(" does not implement the compute_many() method!")
+        raise String("stage ") + String(Self.name) + String(" does not implement the compute_many() method")
 
     # consume_element (stage SINK)
     #   consume one input element
     def consume_element(mut self, var input: Self.InType) raises:
-        raise String("Error: Stage ") + String(Self.name) + String(" does not implement the consume_element() method!")
+        raise String("stage ") + String(Self.name) + String(" does not implement the consume_element() method")
 
     # received_eos (all stages)
     #   react to the end of the stream, perform any necessary cleanup

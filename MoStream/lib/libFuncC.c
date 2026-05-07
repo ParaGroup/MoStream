@@ -30,12 +30,3 @@ int pin_thread_to_cpu(int cpu)
         return err; // non-zero errno on failure
     return 0;
 }
-
-// Pins the current thread to the specified CPU core. Returns 0 on success, or a negative errno on failure
-int pin_thread_to_cpu_checked(int cpu)
-{
-    int r = pin_thread_to_cpu(cpu);
-    if (r == 0)
-        return 0;
-    return -r;
-}

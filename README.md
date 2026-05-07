@@ -26,28 +26,6 @@ running a replica of the stage).
 - Optional CPU pinning through a small C helper library.
 - Configurable communicators (e.g., customizable queue size).
 
-## Repository Layout
-
-```text
-MoStream/
-  __init__.mojo          Public exports
-  pipeline.mojo          Pipeline scheduler and executor
-  stage.mojo             Stage trait and stage kinds
-  node.mojo              Sequential and parallel pipeline nodes
-  communicator.mojo      Message wrappers and communicator
-  MPMC_queue.mojo        Bounded lock-free MPMC queue
-  emitter.mojo           Output emitter for one-to-many stages
-  lib/                   C helper used for CPU affinity
-
-Tests/
-  test_pipe_1.mojo       Source -> transform -> sink example
-  test_pipe_2.mojo       Source -> transform_many -> sink example
-  test_pipe_3.mojo       Parallel transform stages example
-
-Benchmarks/
-  ImagePipeline/         Image-processing pipeline benchmark
-```
-
 ## Requirements
 
 - Mojo toolchain (version >= 0.26.3)
@@ -201,6 +179,86 @@ var pipeline = Pipeline((
 The source stage must be the first pipeline stage, and the sink stage must be
 the last. The total number of node replicas must fit within Mojo's available
 async runtime parallelism.
+
+The source stage must be the first pipeline stage, and the sink stage must be
+the last. The total number of node replicas must fit within Mojo's available
+async runtime parallelism.
+
+## Runtime Backends
+
+MoStream provides two execution runtimes: the standard runtime and the
+cooperative runtime.
+
+### Standard Runtime
+
+The standard runtime is selected with:
+
+```mojo
+pipeline.run()
+```
+
+In this runtime, each pipeline node replica is executed by one long-lived Mojo
+async task. For example:
+
+```mojo
+var pipeline = Pipeline((
+    seq(source),
+    parallel(stage_a, 2),
+    parallel(stage_b, 4),
+    seq(sink),
+))
+
+pipeline.run()
+```
+
+creates one task for the source, two tasks for `stage_a`, four tasks for
+`stage_b`, and one task for the sink.
+
+Each task repeatedly executes the logic of its stage and communicates with the
+next/previous stage through bounded communicators. This runtime is simple
+and direct, but each node replica occupies one task for the whole lifetime of
+the pipeline. Therefore, the total number of node replicas should not exceed the
+parallelism available in Mojo's async runtime.
+
+Use the standard runtime when the pipeline parallelism degree naturally matches
+the number of available runtime threads.
+
+### Cooperative Runtime
+
+The cooperative runtime is selected with:
+
+```mojo
+pipeline.run_cooperative(n_workers)
+```
+
+where `n_workers` is the number of scheduler workers used to execute the
+pipeline actors.
+
+In this runtime, each node replica is represented as an actor. Actors do not own
+a runtime thread permanently. Instead, a smaller number of scheduler workers
+repeatedly pick ready actors, run one non-blocking activation, and then either
+reschedule the actor or park it if it cannot make progress.
+
+For example:
+
+```mojo
+var pipeline = Pipeline((
+    seq(source),
+    parallel(stage_a, 8),
+    parallel(stage_b, 8),
+    seq(sink),
+))
+
+pipeline.run_cooperative(4)
+```
+
+creates many logical actors, but only four scheduler workers execute them. This
+allows MoStream to experiment with pipeline configurations where the number of
+logical stage replicas is larger than the number of runtime worker threads.
+
+The cooperative runtime is especially useful when some stages frequently block
+on input or output. In that case, blocked actors do not need to occupy a worker
+thread while waiting.
 
 ## Runtime Configuration
 

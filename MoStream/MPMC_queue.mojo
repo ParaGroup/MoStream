@@ -33,7 +33,7 @@ struct PaddedAtomicU64:
         self.pad = InlineArray[UInt8, Self.PAD_BYTES](uninitialized=True)
 
 # Cell struct used in the MPMC queue, containing a sequence number and the actual data (one slot of the queue)
-struct Cell[T: Copyable & Defaultable](Movable):
+struct Cell[T: Copyable](Movable):
     var sequence: Atomic[DType.uint64]
     var data: Optional[Self.T]
 
@@ -50,7 +50,7 @@ struct Cell[T: Copyable & Defaultable](Movable):
 
 # MPMC queue implementation based the algorithm by Dmitry Vyukov
 #   (https://www.1024cores.net/home/lock-free-algorithms/queues/bounded-mpmc-queue)
-struct MPMCQueue[T: Copyable & Defaultable](Movable):
+struct MPMCQueue[T: Copyable](Movable):
     comptime CellPointer = UnsafePointer[Cell[Self.T], MutExternalOrigin]
     comptime BACKOFF_MIN = 128
     comptime BACKOFF_MAX = 1024
@@ -61,7 +61,7 @@ struct MPMCQueue[T: Copyable & Defaultable](Movable):
     var dequeue_pos: PaddedAtomicU64
 
     # constructor
-    def __init__(out self, size: Int):
+    def __init__(out self, size: Int = 1024):
         if not ((size >= 2) and (size & (size - 1)) == 0):
             print_red_color("{MoStream} Error: MPMC queues need size to be a power of 2 and at least 2!")
             exit(1)
@@ -87,8 +87,8 @@ struct MPMCQueue[T: Copyable & Defaultable](Movable):
             (self.buffer + i).destroy_pointee()
         self.buffer.free()
 
-    # push method for producers, always return True because it spins forever until the item is pushed successfully
-    def push(mut self, var item: Self.T) -> Bool:
+    # push method for producers, continuously retries until the item has been successfully pushed into the queue
+    def push(mut self, var item: Self.T):
         var pw: UInt64
         var seq: UInt64
         var bk: UInt64 = Self.BACKOFF_MIN
@@ -100,18 +100,37 @@ struct MPMCQueue[T: Copyable & Defaultable](Movable):
                 if self.enqueue_pos.atomicVal.compare_exchange[failure_ordering=Ordering.RELAXED, success_ordering=Ordering.RELAXED](pw, pw + 1):
                     cell_ptr[].data = Optional(item^)
                     Atomic[DType.uint64].store[ordering=Ordering.RELEASE](UnsafePointer(to=cell_ptr[].sequence.value), pw + 1)
-                    return True
+                    return  # successfully pushed
                 for _ in range(bk):
                     #fence[ordering=Ordering.SEQUENTIAL]() # I am not sure of this, I suppose however that this for loop is compiled out
                     pass
                 bk <<= 1
                 bk &= Self.BACKOFF_MAX
-            # elif pw > seq:
-            #    return False
 
-    # pop method for consumers, returns an Optional containing the item if popped successfully,
+    # try_push method for producers, returns None if the item has been successfully pushed, or the item itself if the queue
+    #   is currently full (i.e. no slot is currently available for pushing)
+    def try_push(mut self, var item: Self.T) -> Optional[Self.T]:
+        var pw = self.enqueue_pos.atomicVal.load[ordering=Ordering.RELAXED]()
+        var cell_ptr = self.buffer + (pw & self.mask)
+        var seq = cell_ptr[].sequence.load[ordering=Ordering.ACQUIRE]()
+        if pw != seq:
+            return Optional(item^) # queue is currently full
+        if not self.enqueue_pos.atomicVal.compare_exchange[failure_ordering=Ordering.RELAXED, success_ordering=Ordering.RELAXED](pw, pw + 1):
+            return Optional(item^) # queue is currently full
+        cell_ptr[].data = Optional(item^)
+        Atomic[DType.uint64].store[ordering=Ordering.RELEASE](UnsafePointer(to=cell_ptr[].sequence.value), pw + 1)
+        return None # successfully pushed
+
+    # pop method for consumers, returns the popped item
+    def pop(mut self) -> Self.T:
+        while (True):
+            item = self.try_pop()
+            if item:
+                return item.take()
+
+    # try_pop method for consumers, returns an Optional containing the item if popped successfully,
     #   or None if the queue is empty
-    def pop(mut self) -> Optional[Self.T]:
+    def try_pop(mut self) -> Optional[Self.T]:
         var pr: UInt64
         var seq: UInt64
         var bk: UInt64 = Self.BACKOFF_MIN
