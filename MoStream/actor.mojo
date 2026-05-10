@@ -15,7 +15,7 @@
 
 from MoStream.stage import StageKind, StageTrait
 from MoStream.communicator import MessageTrait, Communicator, MessageWrapper
-from MoStream.utils import print_cyan_color, print_red_color, print_yellow_color
+from MoStream.utils import print_red_color
 
 # The actor activation might produce one of the following statuses:
 struct ActorStatus:
@@ -130,16 +130,14 @@ struct Actor[StageT: StageTrait](Copyable & ImplicitlyDestructible):
         return ActorStatus.READY
 
     # main process of the actor
-    def process(mut self) -> UInt64:
-        try:
-            comptime if Self.StageT.kind == StageKind.SOURCE:
-                return self.process_source()
-            elif Self.StageT.kind == StageKind.TRANSFORM:
-                return self.process_transform()
-            elif Self.StageT.kind == StageKind.SINK:
-                return self.process_sink()
-            else:
-                raise "invalid stage kind in the actor process()"
-        except e:
-            print_red_color("{MoStream} Error: " + String(e) + "!")
+    def process(mut self) raises -> UInt64:
+        comptime if Self.StageT.kind == StageKind.SOURCE:
+            return self.process_source()
+        elif Self.StageT.kind == StageKind.TRANSFORM:
+            return self.process_transform()
+        elif Self.StageT.kind == StageKind.SINK:
+            return self.process_sink()
+        else:
+            print_red_color("{MoStream} Error: invalid stage kind in the actor process()!")
+            raise Error("error in actor process()")
         return ActorStatus.ERROR

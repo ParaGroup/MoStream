@@ -16,7 +16,6 @@
 from MoStream.stage import StageTrait
 from MoStream.communicator import MessageTrait
 from MoStream.actor import Actor
-from std.sys.terminate import exit
 from MoStream.utils import print_red_color
 
 # General trait of a pipeline node
@@ -32,11 +31,11 @@ trait NodeTrait(Copyable & ImplicitlyDestructible):
         ...
 
     # add an actor running this node (used by the cooperative runtime)
-    def add_actor(mut self, var actor: Actor[Self.StageT]):
+    def add_actor(mut self, var actor: Actor[Self.StageT]) raises:
         ...
 
     # return a pointer to the actor with the given replica index (used by the cooperative runtime)
-    def actor_ref(ref self, replica_idx: Int) -> UnsafePointer[Actor[Self.StageT], MutExternalOrigin]:
+    def actor_ref(ref self, replica_idx: Int) raises -> UnsafePointer[Actor[Self.StageT], MutExternalOrigin]:
         ...
 
 # SeqNode is a pipeline node with parallelism 1
@@ -67,18 +66,18 @@ struct SeqNode[st: StageTrait](NodeTrait):
         return self.stage.copy()
 
     # add an actor running this node (used by the cooperative runtime)
-    def add_actor(mut self, var actor: Actor[Self.StageT]):
+    def add_actor(mut self, var actor: Actor[Self.StageT]) raises:
         if self.actor_count >= 1:
             print_red_color("{MoStream} Error: SeqNode can only have one actor!")
-            exit(1)
+            raise Error("error in add_actor()")
         (self.actors + self.actor_count).init_pointee_move(actor^)
         self.actor_count += 1
 
     # return a pointer to the actor with the given replica index (used by the cooperative runtime)
-    def actor_ref(ref self, replica_idx: Int) -> UnsafePointer[Actor[Self.StageT], MutExternalOrigin]:
+    def actor_ref(ref self, replica_idx: Int) raises -> UnsafePointer[Actor[Self.StageT], MutExternalOrigin]:
         if replica_idx != 0:
             print_red_color("{MoStream} Error: SeqNode only has one actor with replica index 0!")
-            exit(1)
+            raise Error("error in actor_ref()")
         return self.actors
 
 # ParallelNode is a set of nodes running the same pipeline stage
@@ -111,15 +110,15 @@ struct ParallelNode[st: StageTrait](NodeTrait):
         return self.stage.copy()
 
     # add an actor running this node (used by the cooperative runtime)
-    def add_actor(mut self, var actor: Actor[Self.StageT]):
+    def add_actor(mut self, var actor: Actor[Self.StageT]) raises:
         (self.actors + self.actor_count).init_pointee_move(actor^)
         self.actor_count += 1
 
     # return a pointer to the actor with the given replica index (used by the cooperative runtime)
-    def actor_ref(ref self, replica_idx: Int) -> UnsafePointer[Actor[Self.StageT], MutExternalOrigin]:
+    def actor_ref(ref self, replica_idx: Int) raises -> UnsafePointer[Actor[Self.StageT], MutExternalOrigin]:
         if replica_idx >= self.actor_count:
-            print_red_color("{MoStream} Error: Invalid replica index accessed with actor_ref()!")
-            exit(1)
+            print_red_color("{MoStream} Error: invalid replica index accessed with actor_ref()!")
+            raise Error("error in actor_ref()")
         return (self.actors + replica_idx)
 
 # Helper function to create a SeqNode

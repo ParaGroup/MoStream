@@ -76,7 +76,7 @@ struct ThirdStage(StageTrait):
 
 # FourthStage - prints the input string
 struct FourthStage(StageTrait):
-    comptime kind = StageKind.SINK
+    comptime kind = StageKind.SINKS
     comptime InType = Int
     comptime OutType = Int
     comptime name = "FourthStage"

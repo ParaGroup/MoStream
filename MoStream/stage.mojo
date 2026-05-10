@@ -16,6 +16,7 @@
 from std.collections import Optional
 from MoStream.communicator import MessageTrait
 from MoStream.emitter import Emitter
+from MoStream.utils import print_red_color
 
 # Types of stages supported by the Pipeline
 struct StageKind:
@@ -35,22 +36,26 @@ trait StageTrait(Copyable & ImplicitlyDestructible):
     # next_element (stage SOURCE)
     #   generate the next element of the stream, returns an Optional containing the element if generated successfully, or None if the stream has ended
     def next_element(mut self) raises -> Optional[Self.OutType]:
-        raise String("stage ") + String(Self.name) + String(" does not implement the next_element() method")
+        print_red_color("{MoStream} Error: stage " + Self.name + " does not implement the next_element() method!")
+        raise Error("error in next_element()")
 
     # compute (stage TRANSFORM)
     #   generate one or zero output elements for the input element
     def compute(mut self, var input: Self.InType) raises -> Optional[Self.OutType]:
-        raise String("stage ") + String(Self.name) + String(" does not implement the compute() method")
+        print_red_color("{MoStream} Error: stage " + Self.name + " does not implement the compute() method!")
+        raise Error("error in compute() method")
 
     # compute_many (stage TRANSFORM_MANY)
     #   generate one, zero or more output elements for the input element
     def compute_many(mut self, var input: Self.InType, mut e: Emitter[Self.OutType]) raises:
-        raise String("stage ") + String(Self.name) + String(" does not implement the compute_many() method")
+        print_red_color("{MoStream} Error: stage " + Self.name + " does not implement the compute_many() method!")
+        raise Error("error in compute_many() method")
 
     # consume_element (stage SINK)
     #   consume one input element
     def consume_element(mut self, var input: Self.InType) raises:
-        raise String("stage ") + String(Self.name) + String(" does not implement the consume_element() method")
+        print_red_color("{MoStream} Error: stage " + Self.name + " does not implement the consume_element() method!")
+        raise Error("error in consume_element() method")
 
     # received_eos (all stages)
     #   react to the end of the stream, perform any necessary cleanup

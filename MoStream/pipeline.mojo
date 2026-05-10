@@ -38,7 +38,8 @@ struct Pinning:
         self.core_ids = List[Int]()
         self.libFuncC = OwnedDLHandle(path_libFuncC)
         if not self.libFuncC.check_symbol("pin_thread_to_cpu"):
-            raise "symbol pin_thread_to_cpu not found in libFuncC.so"
+            print_red_color("{MoStream} Error: symbol pin_thread_to_cpu not found in libFuncC.so!")
+            raise Error("error in Pinning()")
         self.last_assigned_core = 0
 
     # enable/disable pinning for the pipeline threads
@@ -57,7 +58,8 @@ struct Pinning:
                 for part in parts:
                     self.core_ids.append(Int(part))
             except:
-                raise "invalid core id format in MOSTREAM_PINNING"
+                print_red_color("{MoStream} Error: invalid core id format in MOSTREAM_PINNING!")
+                raise Error("error in init_cores_list()")
 
     # get the next core_id (not thread safe!)
     def get_next_core_id(mut self) -> Int:
@@ -85,10 +87,10 @@ struct Pipeline[*Ts: NodeTrait]:
 
     # constructor
     def __init__(out self, var nodes: Tuple[*Self.Ts]) raises:
-        comptime assert Self.N > 1, "Pipeline must have at least 2 stages!"
+        comptime assert Self.N > 1, "{MoStream} Assert: pipeline must have at least 2 stages!"
         comptime for i in range(Self.N):
-            comptime assert Self.Ts[i].StageT.kind != StageKind.SOURCE or i == 0, "Source stage must be the first stage of the pipeline!"
-            comptime assert Self.Ts[i].StageT.kind != StageKind.SINK or i == Self.N - 1, "Sink stage must be the last stage of the pipeline!"
+            comptime assert Self.Ts[i].StageT.kind != StageKind.SOURCE or i == 0, "{MoStream} Assert: source stage must be the first stage of the pipeline!"
+            comptime assert Self.Ts[i].StageT.kind != StageKind.SINK or i == Self.N - 1, "{MoStream} Assert: sink stage must be the last stage of the pipeline!"
         self.nodes = nodes^
         self.queue_size = 1024 # default size of the MPMC queues used for communication between stages
         var path_lib = getenv("MOSTREAM_HOME", ".")
@@ -106,7 +108,7 @@ struct Pipeline[*Ts: NodeTrait]:
                  M: MessageTrait]
                  (mut self,
                  mut tg: TaskGroup,
-                 in_comm: UnsafePointer[mut=True, Communicator[M], _]):    
+                 in_comm: UnsafePointer[mut=True, Communicator[M], _]) raises:    
         var np = self.nodes[idx].parallelism() # parallelism of node idx
         var nc = 0 # parallelism of the next node idx+1
         comptime if idx < Self.N-1:
@@ -125,7 +127,8 @@ struct Pipeline[*Ts: NodeTrait]:
     # run
     def run(mut self) raises:
         if (self.getNumNodes() > parallelism_level()):
-            raise("the number of nodes in the pipeline is greater than the number threads available in the thread pool")
+            print_red_color("{MoStream} Error: the number of nodes in the pipeline is greater than the number threads available in the thread pool!")
+            raise Error("error in run()")
         var pinning = "disabled"
         if self.pinning_handler.enabled:
             pinning = "enabled"
@@ -145,7 +148,7 @@ struct Pipeline[*Ts: NodeTrait]:
                              length: Int,
                              M: MessageTrait]
                              (mut self,
-                             in_comm: UnsafePointer[mut=True, Communicator[M], _]):   
+                             in_comm: UnsafePointer[mut=True, Communicator[M], _]) raises:   
         var np = self.nodes[idx].parallelism() # parallelism of node idx
         var nc = 0 # parallelism of the next node idx+1
         comptime if idx < Self.N-1:
@@ -161,7 +164,8 @@ struct Pipeline[*Ts: NodeTrait]:
     # run_cooperative
     def run_cooperative(mut self, n_workers: Int) raises:
         if (n_workers > parallelism_level()):
-            raise("the number of workers of the cooperative scheduler is greater than the number threads available in the thread pool")
+            print_red_color("{MoStream} Error: the number of workers of the cooperative scheduler is greater than the number threads available in the thread pool!")
+            raise Error("error in run_cooperative()")
         var pinning = "disabled"
         if self.pinning_handler.enabled:
             pinning = "enabled"
@@ -178,7 +182,7 @@ struct Pipeline[*Ts: NodeTrait]:
         print_cyan_color("{MoStream} Pipeline starts...")
         var scheduler = Scheduler(self.nodes)
         scheduler.start(self.nodes, n_workers, self.pinning_handler)
-        print_cyan_color("{MoStream} ...terminated successfully!")
+        print_cyan_color("{MoStream} ...terminated successfully!")    
 
     # enable/disable pinning for the pipeline threads
     def setPinning(mut self, enabled: Bool):

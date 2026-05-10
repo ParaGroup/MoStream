@@ -18,7 +18,6 @@ from MoStream.MPMC_queue import MPMCQueue
 from MoStream.actor import ActorStatus
 from MoStream.pipeline import Pinning
 from MoStream.node import NodeTrait, SeqNode, ParallelNode
-from MoStream.utils import print_red_color
 from std.runtime.asyncrt import create_task, TaskGroup, parallelism_level
 from std.sys.terminate import exit
 
@@ -45,7 +44,7 @@ struct Scheduler[*Ts: NodeTrait]:
     var done_count: UnsafePointer[Atomic[DType.uint64], MutExternalOrigin] # count of actors that have finished execution
 
     # constructor
-    def __init__(out self, mut nodes: Tuple[*Self.Ts]):
+    def __init__(out self, mut nodes: Tuple[*Self.Ts]) raises:
         self.num_stages = len(Self.Ts)
         self.total_actors = 0
         comptime for i in range(len(Self.Ts)):
@@ -123,35 +122,35 @@ struct Scheduler[*Ts: NodeTrait]:
             _ = self.done_count[].fetch_add[ordering=Ordering.ACQUIRE_RELEASE](1)
 
     # process an actor: static dispatching
-    def process_actor(mut self, mut nodes: Tuple[*Self.Ts], actor: ActorDescriptor) -> UInt64:
+    def process_actor(mut self, mut nodes: Tuple[*Self.Ts], actor: ActorDescriptor) raises -> UInt64:
         comptime for i in range(len(Self.Ts)):
             if actor.stage_idx == i:
                 return nodes[i].actor_ref(actor.replica_idx)[].process()
         return ActorStatus.ERROR
 
     # try to reserve an input for parking, returns true if successful
-    def try_reserve_input_for_actor(mut self, mut nodes: Tuple[*Self.Ts], actor: ActorDescriptor) -> Bool:
+    def try_reserve_input_for_actor(mut self, mut nodes: Tuple[*Self.Ts], actor: ActorDescriptor) raises -> Bool:
         comptime for i in range(len(Self.Ts)):
             if actor.stage_idx == i:
                 return nodes[i].actor_ref(actor.replica_idx)[].try_pop_input_for_parking()
         return False
 
     # try to push the pending output for parking, returns true if successful
-    def retry_push_pending_output_for_actor(mut self, mut nodes: Tuple[*Self.Ts], actor: ActorDescriptor) -> Bool:
+    def retry_push_pending_output_for_actor(mut self, mut nodes: Tuple[*Self.Ts], actor: ActorDescriptor) raises -> Bool:
         comptime for i in range(len(Self.Ts)):
             if actor.stage_idx == i:
                 return nodes[i].actor_ref(actor.replica_idx)[].retry_push_pending_output()
         return False
 
     # check if the input communicator of an actor is closed
-    def actor_input_is_closed(mut self, mut nodes: Tuple[*Self.Ts], actor: ActorDescriptor) -> Bool:
+    def actor_input_is_closed(mut self, mut nodes: Tuple[*Self.Ts], actor: ActorDescriptor) raises -> Bool:
         comptime for i in range(len(Self.Ts)):
             if actor.stage_idx == i:
                 return nodes[i].actor_ref(actor.replica_idx)[].in_comm[].is_closed()
         return True
 
     # check if the output communicator of an actor is closed
-    def actor_output_is_closed(mut self, mut nodes: Tuple[*Self.Ts], actor: ActorDescriptor) -> Bool:
+    def actor_output_is_closed(mut self, mut nodes: Tuple[*Self.Ts], actor: ActorDescriptor) raises -> Bool:
         comptime for i in range(len(Self.Ts)):
             if actor.stage_idx == i:
                 return nodes[i].actor_ref(actor.replica_idx)[].out_comm[].is_closed()
@@ -202,12 +201,10 @@ struct Scheduler[*Ts: NodeTrait]:
                 return
 
     # put the actor in the BLOCKING_INPUT state or mark it ready if already available
-    def park_on_input_or_ready(mut self, mut nodes: Tuple[*Self.Ts], actor: ActorDescriptor):
+    def park_on_input_or_ready(mut self, mut nodes: Tuple[*Self.Ts], actor: ActorDescriptor) raises:
         if actor.stage_idx == 0: # it runs a source
-            #self.mark_ready(actor)
-            print_red_color("{MoStream} Error: source actor cannot block on input!")
-            exit(1)
-            #return
+            self.mark_ready(actor)
+            return
         var comm_idx = self.input_wait_queue_idx(actor)
         var expected = ActorStatus.RUNNING
         if not self.actor_states[actor.flat_id].compare_exchange[
@@ -236,7 +233,7 @@ struct Scheduler[*Ts: NodeTrait]:
                 self.ready_queue[].push(actor)
 
     # put the actor in the BLOCKING_OUTPUT state or mark it ready if already available
-    def park_on_output_or_ready(mut self, mut nodes: Tuple[*Self.Ts], actor: ActorDescriptor):
+    def park_on_output_or_ready(mut self, mut nodes: Tuple[*Self.Ts], actor: ActorDescriptor) raises:
         var comm_idx = self.output_wait_queue_idx(actor)
         var expected = ActorStatus.RUNNING
         if not self.actor_states[actor.flat_id].compare_exchange[
@@ -256,7 +253,7 @@ struct Scheduler[*Ts: NodeTrait]:
                 self.ready_queue[].push(actor)
 
     # notification method after processing an actor returning READY
-    def notify_after_ready_activation(mut self, mut nodes: Tuple[*Self.Ts], actor: ActorDescriptor):
+    def notify_after_ready_activation(mut self, mut nodes: Tuple[*Self.Ts], actor: ActorDescriptor) raises:
         # if the actor consumed input, capacity may have been freed upstream
         if actor.stage_idx > 0: # not running a source
             self.wake_one_output_waiter(self.input_wait_queue_idx(actor))
@@ -265,19 +262,19 @@ struct Scheduler[*Ts: NodeTrait]:
             self.wake_one_input_waiter(self.output_wait_queue_idx(actor))
 
     # notification method after processing an actor returning BLOCKED_INPUT
-    def notify_after_blocked_input(mut self, mut nodes: Tuple[*Self.Ts], actor: ActorDescriptor):
+    def notify_after_blocked_input(mut self, mut nodes: Tuple[*Self.Ts], actor: ActorDescriptor) raises:
         # the actor might have pushed the pending_output before blocking on input
         if actor.stage_idx < self.num_stages - 1: # not running a sink
             self.wake_one_input_waiter(self.output_wait_queue_idx(actor))
 
     # notification method after processing an actor returning BLOCKED_OUTPUT
-    def notify_after_blocked_output(mut self, mut nodes: Tuple[*Self.Ts], actor: ActorDescriptor):
+    def notify_after_blocked_output(mut self, mut nodes: Tuple[*Self.Ts], actor: ActorDescriptor) raises:
         # the actor might have consumed the pending_input before blocking on output
         if actor.stage_idx > 0: # not running a source
             self.wake_one_output_waiter(self.input_wait_queue_idx(actor))
 
     # notification method after processing an actor returning DONE
-    def notify_after_done(mut self, mut nodes: Tuple[*Self.Ts], actor: ActorDescriptor):
+    def notify_after_done(mut self, mut nodes: Tuple[*Self.Ts], actor: ActorDescriptor) raises:
         # a DONE transform/sink may have consumed input or observed EOS. Waking an
         # upstream producer is harmless and can release capacity waiters
         if actor.stage_idx > 0: # not running a source
@@ -291,28 +288,32 @@ struct Scheduler[*Ts: NodeTrait]:
     # main worker loop
     async
     def worker_loop(mut self, mut nodes: Tuple[*Self.Ts], core_id: Int, mut pinning_handler: Pinning):
-        # pinning of the underlying thread if pinning is enabled
-        if (core_id >= 0):
-            _ = pinning_handler.pin_on_the_core(core_id)
-        while self.done_count[].load[ordering=Ordering.ACQUIRE]() < UInt64(self.total_actors):
-            var maybe_actor = self.ready_queue[].try_pop()
-            if not maybe_actor:
-                continue
-            var actor = maybe_actor.take()
-            if not self.try_start_actor(actor):
-                continue
-            var result = self.process_actor(nodes, actor)
-            if result == ActorStatus.READY:
-                self.notify_after_ready_activation(nodes, actor)
-                self.mark_ready(actor)
-            elif result == ActorStatus.BLOCKED_INPUT:
-                self.notify_after_blocked_input(nodes, actor)
-                self.park_on_input_or_ready(nodes, actor)
-            elif result == ActorStatus.BLOCKED_OUTPUT:
-                self.notify_after_blocked_output(nodes, actor)
-                self.park_on_output_or_ready(nodes, actor)
-            elif result == ActorStatus.DONE:
-                self.notify_after_done(nodes, actor)
-                self.mark_done(actor)
-            else:
-                self.mark_done(actor)
+        try:
+            # pinning of the underlying thread if pinning is enabled
+            if (core_id >= 0):
+                _ = pinning_handler.pin_on_the_core(core_id)
+            while self.done_count[].load[ordering=Ordering.ACQUIRE]() < UInt64(self.total_actors):
+                var maybe_actor = self.ready_queue[].try_pop()
+                if not maybe_actor:
+                    continue
+                var actor = maybe_actor.take()
+                if not self.try_start_actor(actor):
+                    continue
+                var result = self.process_actor(nodes, actor)
+                if result == ActorStatus.READY:
+                    self.notify_after_ready_activation(nodes, actor)
+                    self.mark_ready(actor)
+                elif result == ActorStatus.BLOCKED_INPUT:
+                    self.notify_after_blocked_input(nodes, actor)
+                    self.park_on_input_or_ready(nodes, actor)
+                elif result == ActorStatus.BLOCKED_OUTPUT:
+                    self.notify_after_blocked_output(nodes, actor)
+                    self.park_on_output_or_ready(nodes, actor)
+                elif result == ActorStatus.DONE:
+                    self.notify_after_done(nodes, actor)
+                    self.mark_done(actor)
+                else:
+                    self.mark_done(actor)
+        except e:
+            print("Raised: " + String(e))
+            exit(1)

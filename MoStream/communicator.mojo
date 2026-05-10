@@ -18,6 +18,7 @@ from std.collections import Optional
 from std.sys.info import size_of
 from std.atomic import Atomic, Ordering
 from std.memory import Reference
+from MoStream.utils import print_red_color
 
 # Trait of messages that can be sent through the Communicator
 comptime MessageTrait = Copyable & ImplicitlyDestructible
@@ -47,7 +48,7 @@ struct Communicator[T: MessageTrait](Movable):
     var closed: UnsafePointer[Atomic[DType.int64], MutExternalOrigin]
 
     # constructor
-    def __init__(out self, pN: Int, cN: Int, queue_size: Int):
+    def __init__(out self, pN: Int, cN: Int, queue_size: Int) raises:
         self.queue = alloc[MPMCQueue[MessageWrapper[Self.T]]](1)
         self.queue.init_pointee_move(MPMCQueue[MessageWrapper[Self.T]](size=queue_size))
         self.prodNum = pN
@@ -88,7 +89,7 @@ struct Communicator[T: MessageTrait](Movable):
 
     # signaling that a producer has finished sending messages (to coordinate the sending of end-of-stream messages)
     def producer_finished(mut self):
-        old_count = self.remainingProducers[].fetch_sub[ordering=Ordering.SEQUENTIAL](1)
+        old_count = self.remainingProducers[].fetch_sub[ordering=Ordering.ACQUIRE_RELEASE](1)
         if old_count == Int64(1):
             Atomic[DType.int64].store[ordering=Ordering.RELEASE](UnsafePointer(to=self.closed[].value), Int64(1))
 

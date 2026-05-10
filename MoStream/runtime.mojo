@@ -19,7 +19,8 @@ from MoStream.stage import StageKind, StageTrait
 from MoStream.node import NodeTrait
 from MoStream.emitter import Emitter
 from MoStream.pipeline import Pinning
-from MoStream.utils import print_cyan_color, print_red_color, print_yellow_color
+from MoStream.utils import print_red_color
+from std.sys.terminate import exit
 from std.ffi import OwnedDLHandle, c_int
 
 # Executor_task: the function that will be run by each task of the pipeline,
@@ -49,9 +50,11 @@ def executor_task[NodeT: NodeTrait,
         elif NodeT.StageT.kind == StageKind.TRANSFORM_MANY:
             execute_transform_many[NodeT.StageT, In, Out](s, inComm, outComm)
         else:
-            raise String("stage") + String(NodeT.StageT.name) + String("has an undefined kind")
+            print_red_color("{MoStream} Error: " + String("stage ") + String(NodeT.StageT.name) + String(" has an undefined kind!"))
+            raise Error("error in executor_task()")
     except e:
-        print_red_color("{MoStream} Error: " + String(e) + "!")
+        print("Raised: " + String(e))
+        exit(1)
 
 # Execute_source: the function that will be run by the task of a SOURCE stage of the pipeline
 def execute_source[Stage: StageTrait,

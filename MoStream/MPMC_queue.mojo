@@ -17,7 +17,6 @@ from std.atomic import Atomic, Ordering, fence
 from std.time import sleep
 from std.sys.info import size_of
 from std.collections import Optional
-from std.sys.terminate import exit
 from MoStream.utils import print_red_color
 
 # Struct to add padding to an atomic variable to avoid false sharing between producer and consumer
@@ -61,10 +60,10 @@ struct MPMCQueue[T: Copyable](Movable):
     var dequeue_pos: PaddedAtomicU64
 
     # constructor
-    def __init__(out self, size: Int = 1024):
+    def __init__(out self, size: Int = 1024) raises:
         if not ((size >= 2) and (size & (size - 1)) == 0):
             print_red_color("{MoStream} Error: MPMC queues need size to be a power of 2 and at least 2!")
-            exit(1)
+            raise Error("error in MPMC_Queue()")
         self.size = UInt64(size)
         self.mask = UInt64(size - 1)
         self.buffer = alloc[Cell[Self.T]](Int(self.size))
