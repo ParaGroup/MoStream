@@ -72,10 +72,6 @@ def execute_source[Stage: StageTrait,
             s.received_eos()
         else:
             outComm[].push(MessageWrapper[Out](data = rebind[Optional[Out]](output).take(), eos = False))
-    # destroy the input communicator
-    if (inComm[].check_isDestroyable()):
-        inComm.destroy_pointee()
-        inComm.free()
 
 # Execute_sink: the function that will be run by the task of a SINK stage of the pipeline
 def execute_sink[Stage: StageTrait,
@@ -92,9 +88,7 @@ def execute_sink[Stage: StageTrait,
             s.received_eos()
         else:
             s.consume_element(rebind[MessageWrapper[Stage.InType]](input).data.take())
-    # destroy the output and input communicators
-    outComm.destroy_pointee()
-    outComm.free()
+    # try to destroy the input communicator
     if (inComm[].check_isDestroyable()):
         inComm.destroy_pointee()
         inComm.free()
@@ -117,7 +111,7 @@ def execute_transform[Stage: StageTrait,
             output = s.compute(rebind[MessageWrapper[Stage.InType]](input).data.take())
             if (output != None):
                 outComm[].push(MessageWrapper[Out](data = rebind[Optional[Out]](output).take(), eos = False))
-    # destroy the input communicator
+    # try to destroy the input communicator
     if (inComm[].check_isDestroyable()):
         inComm.destroy_pointee()
         inComm.free()
@@ -139,7 +133,7 @@ def execute_transform_many[Stage: StageTrait,
             s.received_eos()
         else:
             output = s.compute_many(rebind[MessageWrapper[Stage.InType]](input).data.take(), rebind[Emitter[Stage.OutType]](e))
-    # destroy the input communicator
+    # try to destroy the input communicator
     if (inComm[].check_isDestroyable()):
         inComm.destroy_pointee()
         inComm.free()

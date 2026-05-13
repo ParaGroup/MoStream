@@ -110,7 +110,7 @@ def main():
     # creating the pipeline and running it
     try:
         var n_workers = Int(args[1])
-        pipeline = Pipeline((seq(first_stage), parallel(second_stage, 2), parallel(third_stage, 3), seq(fourth_stage)))
+        pipeline = Pipeline((parallel(first_stage,2), parallel(second_stage, 2), parallel(third_stage, 3), parallel(fourth_stage, 3)))
         pipeline.setPinning(enabled=False)        
         pipeline.run_cooperative(n_workers)
     except e:

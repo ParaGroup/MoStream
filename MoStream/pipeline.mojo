@@ -110,11 +110,11 @@ struct Pipeline[*Ts: NodeTrait]:
                  mut tg: TaskGroup,
                  in_comm: UnsafePointer[mut=True, Communicator[M], _]) raises:    
         var np = self.nodes[idx].parallelism() # parallelism of node idx
-        var nc = 0 # parallelism of the next node idx+1
+        var out_comm: UnsafePointer[Communicator[Self.Ts[idx].StageT.OutType], MutExternalOrigin] = {}
         comptime if idx < Self.N-1:
-            nc = self.nodes[idx+1].parallelism()
-        out_comm = alloc[Communicator[Self.Ts[idx].StageT.OutType]](1)
-        out_comm.init_pointee_move(Communicator[Self.Ts[idx].StageT.OutType](pN=np, cN=nc, queue_size=self.queue_size))
+            var nc = self.nodes[idx+1].parallelism()
+            out_comm = alloc[Communicator[Self.Ts[idx].StageT.OutType]](1)
+            out_comm.init_pointee_move(Communicator[Self.Ts[idx].StageT.OutType](pN=np, cN=nc, queue_size=self.queue_size))
         for _ in range(0, np):
             tg.create_task(executor_task[idx, length](self.nodes[idx],
                                                       in_comm,
@@ -137,8 +137,7 @@ struct Pipeline[*Ts: NodeTrait]:
         print_cyan_color("{MoStream} CPU pinning is " + pinning)
         print_cyan_color("{MoStream} Pipeline starts...")
         var tg = TaskGroup()
-        first_comm = alloc[Communicator[Self.Ts[0].StageT.InType]](1)
-        first_comm.init_pointee_move(Communicator[Self.Ts[0].StageT.InType](pN=0, cN=self.nodes[0].parallelism(), queue_size=self.queue_size))
+        var first_comm : UnsafePointer[Communicator[Self.Ts[0].StageT.InType], MutExternalOrigin] = {}
         self._run_from[0, Self.N](tg, first_comm)
         tg.wait()
         print_cyan_color("{MoStream} ...terminated successfully!")
@@ -150,11 +149,11 @@ struct Pipeline[*Ts: NodeTrait]:
                              (mut self,
                              in_comm: UnsafePointer[mut=True, Communicator[M], _]) raises:   
         var np = self.nodes[idx].parallelism() # parallelism of node idx
-        var nc = 0 # parallelism of the next node idx+1
+        var out_comm: UnsafePointer[Communicator[Self.Ts[idx].StageT.OutType], MutExternalOrigin] = {}
         comptime if idx < Self.N-1:
-            nc = self.nodes[idx+1].parallelism()
-        out_comm = alloc[Communicator[Self.Ts[idx].StageT.OutType]](1)
-        out_comm.init_pointee_move(Communicator[Self.Ts[idx].StageT.OutType](pN=np, cN=nc, queue_size=self.queue_size))
+            var nc = self.nodes[idx+1].parallelism()
+            out_comm = alloc[Communicator[Self.Ts[idx].StageT.OutType]](1)
+            out_comm.init_pointee_move(Communicator[Self.Ts[idx].StageT.OutType](pN=np, cN=nc, queue_size=self.queue_size))
         in_c = rebind[UnsafePointer[Communicator[Self.Ts[idx].StageT.InType], MutAnyOrigin]](in_comm)
         for _ in range(0, self.nodes[idx].parallelism()):
             self.nodes[idx].add_actor(Actor[Self.Ts[idx].StageT](stage=self.nodes[idx].make_stage(), in_comm=in_c, out_comm=out_comm))
@@ -169,8 +168,7 @@ struct Pipeline[*Ts: NodeTrait]:
         var pinning = "disabled"
         if self.pinning_handler.enabled:
             pinning = "enabled"
-        in_comm = alloc[Communicator[Self.Ts[0].StageT.InType]](1)
-        in_comm.init_pointee_move(Communicator[Self.Ts[0].StageT.InType](pN=0, cN=self.nodes[0].parallelism(), queue_size=self.queue_size))
+        var in_comm : UnsafePointer[Communicator[Self.Ts[0].StageT.InType], MutExternalOrigin] = {}
         out_comm = alloc[Communicator[Self.Ts[0].StageT.OutType]](1)
         out_comm.init_pointee_move(Communicator[Self.Ts[0].StageT.OutType](pN=self.nodes[0].parallelism(), cN=self.nodes[1].parallelism(), queue_size=self.queue_size))
         for _ in range(0, self.nodes[0].parallelism()):

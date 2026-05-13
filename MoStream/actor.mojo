@@ -104,6 +104,10 @@ struct Actor[StageT: StageTrait](Copyable & ImplicitlyDestructible):
             self.done = True
             self.out_comm[].producer_finished()
             self.stage.received_eos()
+            # try to destroy the input communicator
+            if (self.in_comm[].check_isDestroyable()):
+                self.in_comm.destroy_pointee()
+                self.in_comm.free()
             return ActorStatus.DONE
         var maybe_output = self.stage.compute(rebind[MessageWrapper[Self.StageT.InType]](input).data.take())
         if maybe_output:
@@ -125,6 +129,10 @@ struct Actor[StageT: StageTrait](Copyable & ImplicitlyDestructible):
         if input.eos:
             self.done = True
             self.stage.received_eos()
+            # try to destroy the input communicator
+            if (self.in_comm[].check_isDestroyable()):
+                self.in_comm.destroy_pointee()
+                self.in_comm.free()
             return ActorStatus.DONE
         self.stage.consume_element(rebind[MessageWrapper[Self.StageT.InType]](input).data.take())
         return ActorStatus.READY

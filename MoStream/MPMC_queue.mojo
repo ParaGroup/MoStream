@@ -153,3 +153,14 @@ struct MPMCQueue[T: Copyable](Movable):
             elif seq < expected_seq:
                 # empty slot, the producer has not yet written the item, return None
                 return Optional[Self.T](None)
+
+    # returns an estimate of the current number of items in the queue
+    def estimated_len(self) -> Int:
+        var enq = self.enqueue_pos.load[ordering=Ordering.RELAXED]()
+        var deq = self.dequeue_pos.load[ordering=Ordering.RELAXED]()
+        if enq <= deq:
+            return 0
+        var diff = enq - deq
+        if diff > self.size:
+            return Int(self.size)
+        return Int(diff)

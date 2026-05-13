@@ -76,7 +76,7 @@ struct ThirdStage(StageTrait):
 
 # FourthStage - prints the input string
 struct FourthStage(StageTrait):
-    comptime kind = StageKind.SINKS
+    comptime kind = StageKind.SINK
     comptime InType = Int
     comptime OutType = Int
     comptime name = "FourthStage"
@@ -103,7 +103,7 @@ def main():
     fourth_stage = FourthStage()
     # creating the pipeline and running it
     try:
-        pipeline = Pipeline((seq(first_stage), parallel(second_stage, 2), parallel(third_stage, 3), seq(fourth_stage)))
+        pipeline = Pipeline((parallel(first_stage,2), parallel(second_stage, 2), parallel(third_stage, 3), parallel(fourth_stage, 3)))
         pipeline.setPinning(enabled=False)        
         pipeline.run()
     except e:

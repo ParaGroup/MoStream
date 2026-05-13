@@ -119,15 +119,16 @@ struct Communicator[T: MessageTrait](Movable):
         var maybe_msg = self.queue[].try_pop()
         if maybe_msg:
             return maybe_msg^
-
         # if the queue looked empty, check whether producers are finished
         if not self.is_closed():
             return None
-
         # critical recheck
         maybe_msg = self.queue[].try_pop()
         if maybe_msg:
             return maybe_msg^
-
         # closed and still empty after the synchronized recheck
         return Optional(MessageWrapper[Self.T](eos=True))
+
+    # get the estimated number of messages currently in the communicator
+    def estimated_len(self) -> Int:
+        return self.queue[].estimated_len()
