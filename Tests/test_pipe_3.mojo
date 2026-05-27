@@ -13,7 +13,7 @@
 #  Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
 # ===------------------------------------------------------------------------=== #
 
-# Third test of a pipeline with 4 stages:
+# Third test of a pipeline with 4 stages using the standard runtime:
 #   - FirstStage: source generating numbers from 1 to 1000
 #   - SecondStage: parallel stage forwarding the received number
 #   - ThirdStage: parallel stage forwarding the received number

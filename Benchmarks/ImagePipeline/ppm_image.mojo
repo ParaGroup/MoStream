@@ -16,18 +16,12 @@
 from std.memory import memcpy, memset
 
 # A simple PPM image class with planar RGB data layout (Struct of Arrays)
-struct PPMImage(ImplicitlyCopyable):
+struct PPMImage(Copyable & ImplicitlyDestructible):
     var width: Int
     var height: Int
     var data_ptr: UnsafePointer[UInt8, MutExternalOrigin]  # W*H*3 bytes, planar
 
     # constructor I
-    def __init__(out self):
-        self.width = 0
-        self.height = 0
-        self.data_ptr = {}
-
-    # constructor II
     def __init__(out self, width: Int, height: Int):
         self.width = width
         self.height = height
@@ -35,7 +29,7 @@ struct PPMImage(ImplicitlyCopyable):
         self.data_ptr = alloc[UInt8](num_bytes)
         memset(self.data_ptr, UInt8(0), num_bytes)
 
-    # constructor III
+    # constructor II
     def __init__(out self, width: Int, height: Int, fill: UInt8):
         self.width = width
         self.height = height
@@ -52,7 +46,7 @@ struct PPMImage(ImplicitlyCopyable):
             self.data_ptr = alloc[UInt8](num_bytes)
             memcpy(dest=self.data_ptr, src=copy.data_ptr, count=num_bytes)
         else:
-            self.data_ptr = {}
+            self.data_ptr = UnsafePointer[UInt8, MutExternalOrigin].unsafe_dangling()
 
     # move constructor
     def __init__(out self, *, deinit take: Self):
@@ -62,8 +56,7 @@ struct PPMImage(ImplicitlyCopyable):
 
     # destructor
     def __del__(deinit self):
-        if self.data_ptr:
-            self.data_ptr.free()
+        self.data_ptr.free()
 
     # get number of bytes in the image data
     @always_inline
@@ -136,4 +129,4 @@ struct PPMImage(ImplicitlyCopyable):
                 var g = UInt8((y * 255) // max(height - 1, 1))
                 var b = UInt8(((x + y) * 127) // max(width + height - 2, 1))
                 img.set_pixel(x, y, r, g, b)
-        return img
+        return img^

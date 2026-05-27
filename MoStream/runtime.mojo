@@ -124,7 +124,7 @@ def execute_transform_many[Stage: StageTrait,
                           inComm: UnsafePointer[mut=True, Communicator[In], _],
                           outComm: UnsafePointer[mut=True, Communicator[Out], _]) raises:
     var end_of_stream = False
-    var e = Emitter(outComm)
+    var e = Emitter(outComm) # False because runtime is the standard one here
     while (not end_of_stream):
         input = inComm[].pop()
         if input.eos:

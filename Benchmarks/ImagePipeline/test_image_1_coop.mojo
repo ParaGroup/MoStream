@@ -13,7 +13,7 @@
 #  Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
 # ===------------------------------------------------------------------------=== #
 
-# Image processing pipeline benchmark in Mojo:
+# Image processing pipeline benchmark in Mojo using the cooperative runtime:
 #   - TimedImageSource: source generating copies of the same image for a fixed duration
 #   - GrayScaleFilter: converts input image to grayscale
 #   - GaussianBlur: applies a 3x3 Gaussian blur to the input image
@@ -41,17 +41,17 @@ def throughput(n: Int, ms: Float64) -> Float64:
     return Float64(n) / (ms / 1000.0)
 
 # Run a given configuration of the pipeline
-def run_config(g: Int, b: Int, s: Int) raises -> Tuple[Int, Float64]:
+def run_config(src_degree: Int, gray_degree: Int, blur_degree: Int, sharp_degree: Int, sink_degree: Int, n_workers: Int) raises -> Tuple[Int, Float64]:
     var source = TimedImageSource[W, H, DURATION]()
     var gray = Grayscale()
     var blur = GaussianBlur()
     var sharp = Sharpen()
     var sink = ImageSink()
     var count_ptr = sink.count_ptr
-    var pipeline = Pipeline((seq(source), parallel(gray, g), parallel(blur, b), parallel(sharp, s), seq(sink)))
+    var pipeline = Pipeline((parallel(source, src_degree), parallel(gray, gray_degree), parallel(blur, blur_degree), parallel(sharp, sharp_degree), parallel(sink, sink_degree)))
     pipeline.setPinning(True)
     var t0 = perf_counter_ns()
-    pipeline.run()
+    pipeline.run_cooperative(n_workers)
     var ms = elapsed_ms(t0)
     var n = count_ptr[]
     count_ptr.free()
@@ -61,21 +61,19 @@ def run_config(g: Int, b: Int, s: Int) raises -> Tuple[Int, Float64]:
 # Main
 def main():
     var args = argv()
-    if len(args) != 4:
-        print("Usage: ./test_image_pipeline <G> <B> <S>")
-        print("  G = Grayscale parallelism")
-        print("  B = GaussianBlur parallelism")
-        print("  S = Sharpen parallelism")
+    if len(args) != 7:
+        print("Usage: ./test_image_coop <Source> <GrayScale> <GaussianBlur> <Sharpen> <Sink> <n_workers>")
         return
     try:
-        var g = Int(args[1])
-        var b = Int(args[2])
-        var s = Int(args[3])
-        var threads = g + b + s + 2  # source + sink + workers
+        var src_degree = Int(args[1])
+        var gray_degree = Int(args[2])
+        var blur_degree = Int(args[3])
+        var sharp_degree = Int(args[4])
+        var sink_degree = Int(args[5])
+        var n_workers = Int(args[6])
         print("  Image processing pipeline in Mojo: Source -> GrayScale -> GaussianBlur -> Sharpen -> Sink")
-        print("  Image: " + String(W) + "x" + String(H) + " | Duration=" + String(DURATION) + "s")
-        print("  Config: G=" + String(g) + " B=" + String(b) + " S=" + String(s) + " | threads=" + String(threads))
-        var res = run_config(g, b, s)
+        print("  Configuration: Source=" + String(src_degree) + " GrayScale=" + String(gray_degree) + " GaussianBlur=" + String(blur_degree) + " Sharpen=" + String(sharp_degree) + " Sink=" + String(sink_degree) + " n_workers=" + String(n_workers))
+        var res = run_config(src_degree, gray_degree, blur_degree, sharp_degree, sink_degree, n_workers)
         var n = res[0]; var ms = res[1]
         var tput = throughput(n, ms)
         print("Elapsed time: " + String(ms) + " ms")

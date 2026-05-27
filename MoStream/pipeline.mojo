@@ -84,6 +84,7 @@ struct Pipeline[*Ts: NodeTrait]:
     var nodes: Tuple[*Self.Ts]
     var queue_size: Int
     var pinning_handler: Pinning
+    var alreadyRun: Bool
 
     # constructor
     def __init__(out self, var nodes: Tuple[*Self.Ts]) raises:
@@ -96,11 +97,12 @@ struct Pipeline[*Ts: NodeTrait]:
         var path_lib = getenv("MOSTREAM_HOME", ".")
         if path_lib == ".":
             print_yellow_color("{MoStream} Warning: MOSTREAM_HOME environment variable not set, using current directory as default")
-        path_lib += "/MoStream/lib/libFuncC.so"
+        path_lib += "/MoStream/lib/libpinning.so"
         self.pinning_handler = Pinning(path_lib)
         var mapping_str = getenv("MOSTREAM_PINNING", "")
         mp = Python.import_module("multiprocessing")
         self.pinning_handler.init_cores_list(mapping_str, Int(py=mp.cpu_count()))
+        self.alreadyRun = False
 
     # _run_from
     def _run_from[idx: Int,
@@ -110,7 +112,7 @@ struct Pipeline[*Ts: NodeTrait]:
                  mut tg: TaskGroup,
                  in_comm: UnsafePointer[mut=True, Communicator[M], _]) raises:    
         var np = self.nodes[idx].parallelism() # parallelism of node idx
-        var out_comm: UnsafePointer[Communicator[Self.Ts[idx].StageT.OutType], MutExternalOrigin] = {}
+        var out_comm = UnsafePointer[Communicator[Self.Ts[idx].StageT.OutType], MutExternalOrigin].unsafe_dangling()
         comptime if idx < Self.N-1:
             var nc = self.nodes[idx+1].parallelism()
             out_comm = alloc[Communicator[Self.Ts[idx].StageT.OutType]](1)
@@ -126,6 +128,10 @@ struct Pipeline[*Ts: NodeTrait]:
 
     # run
     def run(mut self) raises:
+        if (self.alreadyRun):
+            print_red_color("{MoStream} Error: run() or run_cooperative() method can be called only once for each pipeline instance!")
+            raise Error("error in run()")
+        self.alreadyRun = True
         if (self.getNumNodes() > parallelism_level()):
             print_red_color("{MoStream} Error: the number of nodes in the pipeline is greater than the number threads available in the thread pool!")
             raise Error("error in run()")
@@ -137,7 +143,7 @@ struct Pipeline[*Ts: NodeTrait]:
         print_cyan_color("{MoStream} CPU pinning is " + pinning)
         print_cyan_color("{MoStream} Pipeline starts...")
         var tg = TaskGroup()
-        var first_comm : UnsafePointer[Communicator[Self.Ts[0].StageT.InType], MutExternalOrigin] = {}
+        var first_comm = UnsafePointer[Communicator[Self.Ts[0].StageT.InType], MutExternalOrigin].unsafe_dangling()
         self._run_from[0, Self.N](tg, first_comm)
         tg.wait()
         print_cyan_color("{MoStream} ...terminated successfully!")
@@ -149,7 +155,7 @@ struct Pipeline[*Ts: NodeTrait]:
                              (mut self,
                              in_comm: UnsafePointer[mut=True, Communicator[M], _]) raises:   
         var np = self.nodes[idx].parallelism() # parallelism of node idx
-        var out_comm: UnsafePointer[Communicator[Self.Ts[idx].StageT.OutType], MutExternalOrigin] = {}
+        var out_comm = UnsafePointer[Communicator[Self.Ts[idx].StageT.OutType], MutExternalOrigin].unsafe_dangling()
         comptime if idx < Self.N-1:
             var nc = self.nodes[idx+1].parallelism()
             out_comm = alloc[Communicator[Self.Ts[idx].StageT.OutType]](1)
@@ -162,13 +168,17 @@ struct Pipeline[*Ts: NodeTrait]:
 
     # run_cooperative
     def run_cooperative(mut self, n_workers: Int) raises:
+        if (self.alreadyRun):
+            print_red_color("{MoStream} Error: run() or run_cooperative() method can be called only once for each pipeline instance!")
+            raise Error("error in run()")
+        self.alreadyRun = True
         if (n_workers > parallelism_level()):
             print_red_color("{MoStream} Error: the number of workers of the cooperative scheduler is greater than the number threads available in the thread pool!")
             raise Error("error in run_cooperative()")
         var pinning = "disabled"
         if self.pinning_handler.enabled:
             pinning = "enabled"
-        var in_comm : UnsafePointer[Communicator[Self.Ts[0].StageT.InType], MutExternalOrigin] = {}
+        var in_comm = UnsafePointer[Communicator[Self.Ts[0].StageT.InType], MutExternalOrigin].unsafe_dangling()
         out_comm = alloc[Communicator[Self.Ts[0].StageT.OutType]](1)
         out_comm.init_pointee_move(Communicator[Self.Ts[0].StageT.OutType](pN=self.nodes[0].parallelism(), cN=self.nodes[1].parallelism(), queue_size=self.queue_size))
         for _ in range(0, self.nodes[0].parallelism()):

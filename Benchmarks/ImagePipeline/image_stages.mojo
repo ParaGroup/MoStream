@@ -13,7 +13,7 @@
 #  Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
 # ===------------------------------------------------------------------------=== #
 
-from MoStream import StageKind, StageTrait
+from MoStream import StageKind, StageTrait, Emitter
 from ppm_image import PPMImage
 from std.time import perf_counter_ns
 
@@ -43,7 +43,7 @@ struct TimedImageSource[ImgW: Int, ImgH: Int, DurationSec: Int = 60](StageTrait)
         if perf_counter_ns() - self.start_ns >= UInt(Self.DurationSec) * 1_000_000_000:
             return None
         self.count += 1
-        return self.pool
+        return self.pool.copy()
 
     # handle received EOS (no-op for source)
     def received_eos(mut self):
@@ -88,7 +88,7 @@ struct Grayscale(StageTrait):
             i += 1
         self.compute_time_ns += perf_counter_ns() - t0
         self.count += 1
-        return out
+        return out^
 
     # handle received EOS by printing timing stats
     def received_eos(mut self):
@@ -147,7 +147,7 @@ struct GaussianBlur(StageTrait):
                     (out.b_ptr() + y*w + x).store(self.border_pixel(input.b_ptr(), x, y, w, h))
             self.compute_time_ns += perf_counter_ns() - t0
             self.count += 1
-            return out
+            return out^
         # process each channel separately — stride-1, 9 vector loads per pixel group
         for ch in range(3):
             var ch_in  = input.r_ptr() if ch == 0 else (input.g_ptr() if ch == 1 else input.b_ptr())
@@ -190,7 +190,7 @@ struct GaussianBlur(StageTrait):
                 (ch_out + y*w + w-1).store(self.border_pixel(ch_in, w-1, y, w, h))
         self.compute_time_ns += perf_counter_ns() - t0
         self.count += 1
-        return out
+        return out^
 
     # handle received EOS by printing timing stats
     def received_eos(mut self):
@@ -287,7 +287,7 @@ struct Sharpen(StageTrait):
         self.sharpen_plane(input.b_ptr(), out.b_ptr(), w, h)
         self.compute_time_ns += perf_counter_ns() - t0
         self.count += 1
-        return out
+        return out^
 
     # handle received EOS by printing timing stats
     def received_eos(mut self):
@@ -295,6 +295,82 @@ struct Sharpen(StageTrait):
         # var total_ms = Float64(Int(self.compute_time_ns)) / 1_000_000.0
         # var avg_ms = total_ms / Float64(self.count) if self.count > 0 else 0.0
         # print("    [" + Self.name + "] total=" + String(total_ms) + " ms | n=" + String(self.count) + " | avg/img=" + String(avg_ms) + " ms")
+
+# RandomPixelRounds: for each input image, emits 0..5 randomly mutated versions
+struct RandomPixelRounds(StageTrait):
+    comptime kind = StageKind.TRANSFORM_MANY
+    comptime InType = PPMImage
+    comptime OutType = PPMImage
+    comptime name = "RandomPixelRounds"
+
+    var compute_time_ns: UInt
+    var count: Int
+    var rng_state: UInt64
+    var seeded: Bool
+
+    # constructor
+    def __init__(out self):
+        self.compute_time_ns = 0
+        self.count = 0
+        self.rng_state = UInt64(88172645463393265)
+        self.seeded = False
+
+    # next_u64: xorshift64* PRNG for reproducible randomness without external dependencies
+    @always_inline
+    def next_u64(mut self) -> UInt64:
+        var x = self.rng_state
+        x = x ^ (x << 13)
+        x = x ^ (x >> 7)
+        x = x ^ (x << 17)
+        self.rng_state = x
+        return x
+
+    # rand_int: returns a random integer in [0, upper) using next_u64
+    @always_inline
+    def rand_int(mut self, upper: Int) -> Int:
+        if upper <= 0:
+            return 0
+        return Int(self.next_u64() % UInt64(upper))
+
+    # rand_u8: returns a random UInt8 using next_u64#
+    @always_inline
+    def rand_u8(mut self) -> UInt8:
+        return UInt8(Int(self.next_u64() % UInt64(256)))
+
+    # compute_many implementation: emits 0..5 mutated versions of the input image by randomly changing some pixels
+    @always_inline
+    def compute_many(mut self, var input: PPMImage, mut emitter: Emitter[PPMImage]) -> None:
+        var t0 = perf_counter_ns()
+        if not self.seeded:
+            self.rng_state += UInt64(t0)
+            if self.rng_state == UInt64(0):
+                self.rng_state = UInt64(88172645463393265)
+            self.seeded = True
+        var n = input.width * input.height
+        if n <= 0:
+            self.compute_time_ns += perf_counter_ns() - t0
+            self.count += 1
+            return
+        # random number of emitted images: 0, 1, 2, 3, 4, or 5.
+        var rounds = self.rand_int(6)
+        # at each round, randomly change between 1 and about 1/128 of the pixels.
+        var max_changes = n // 128
+        if max_changes < 1:
+            max_changes = 1
+        for _ in range(rounds):
+            var changes = 1 + self.rand_int(max_changes)
+            for _ in range(changes):
+                var idx = self.rand_int(n)
+                var x = idx % input.width
+                var y = idx // input.width
+                input.set_pixel(x, y, self.rand_u8(), self.rand_u8(), self.rand_u8())
+            emitter.emit(input.copy())
+        self.compute_time_ns += perf_counter_ns() - t0
+        self.count += 1
+
+    # handle received EOS by printing timing stats
+    def received_eos(mut self):
+        pass
 
 # ImageSink: receives images, counts them, and prints final stats on EOS
 struct ImageSink(StageTrait):

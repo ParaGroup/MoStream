@@ -13,7 +13,7 @@
 #  Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
 # ===------------------------------------------------------------------------=== #
 
-# First test of a pipeline with 3 stages:
+# First test of a pipeline with 3 stages using the standard runtime:
 #   - FirstStage: source generating numbers from 1 to 1000
 #   - SecondStage: stage incrementing each input and converts it to a string
 #   - ThirdStage: sink printing each input string received

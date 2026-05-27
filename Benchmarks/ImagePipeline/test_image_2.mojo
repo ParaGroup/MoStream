@@ -13,16 +13,17 @@
 #  Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
 # ===------------------------------------------------------------------------=== #
 
-# Image processing pipeline benchmark in Mojo using the cooperative runtime:
+# Image processing pipeline benchmark in Mojo using the standard runtime:
 #   - TimedImageSource: source generating copies of the same image for a fixed duration
 #   - GrayScaleFilter: converts input image to grayscale
+#   - Randomizer: generate some output images as a copy of the input one with some random pixels modified
 #   - GaussianBlur: applies a 3x3 Gaussian blur to the input image
 #   - Sharpen: applies a 3x3 sharpening filter to the input image
 #   - ImageSink: receives processed images, counts them, and prints final stats on EOS
 #   The intermediate stages can be parallel, the source and sink are always single-threaded.
 
 from MoStream import Pipeline, seq, parallel
-from image_stages import TimedImageSource, Grayscale, GaussianBlur, Sharpen, ImageSink
+from image_stages import TimedImageSource, Grayscale, RandomPixelRounds, GaussianBlur, Sharpen, ImageSink
 from std.time import perf_counter_ns
 from std.sys import argv
 
@@ -41,17 +42,18 @@ def throughput(n: Int, ms: Float64) -> Float64:
     return Float64(n) / (ms / 1000.0)
 
 # Run a given configuration of the pipeline
-def run_config(g: Int, b: Int, s: Int, n_workers: Int) raises -> Tuple[Int, Float64]:
+def run_config(src_degree: Int, gray_degree: Int, random_degree: Int, blur_degree: Int, sharp_degree: Int, sink_degree: Int) raises -> Tuple[Int, Float64]:
     var source = TimedImageSource[W, H, DURATION]()
     var gray = Grayscale()
+    var randomizer = RandomPixelRounds()
     var blur = GaussianBlur()
     var sharp = Sharpen()
     var sink = ImageSink()
     var count_ptr = sink.count_ptr
-    var pipeline = Pipeline((seq(source), parallel(gray, g), parallel(blur, b), parallel(sharp, s), seq(sink)))
+    var pipeline = Pipeline((parallel(source, src_degree), parallel(gray, gray_degree), parallel(randomizer, random_degree), parallel(blur, blur_degree), parallel(sharp, sharp_degree), parallel(sink, sink_degree)))
     pipeline.setPinning(True)
     var t0 = perf_counter_ns()
-    pipeline.run_cooperative(n_workers)
+    pipeline.run()
     var ms = elapsed_ms(t0)
     var n = count_ptr[]
     count_ptr.free()
@@ -61,22 +63,19 @@ def run_config(g: Int, b: Int, s: Int, n_workers: Int) raises -> Tuple[Int, Floa
 # Main
 def main():
     var args = argv()
-    if len(args) != 5:
-        print("Usage: ./test_image_pipeline <G> <B> <S> <n_workers>")
-        print("  G = Grayscale parallelism")
-        print("  B = GaussianBlur parallelism")
-        print("  S = Sharpen parallelism")
-        print("  n_workers = number of workers for the cooperative scheduler")
+    if len(args) != 7:
+        print("Usage: ./test_image_coop <Source> <GrayScale> <Randomizer> <GaussianBlur> <Sharpen> <Sink>")
         return
     try:
-        var g = Int(args[1])
-        var b = Int(args[2])
-        var s = Int(args[3])
-        var n_workers = Int(args[4])
-        print("  Image processing pipeline in Mojo: Source -> GrayScale -> GaussianBlur -> Sharpen -> Sink")
-        print("  Image: " + String(W) + "x" + String(H) + " | Duration=" + String(DURATION) + "s")
-        print("  Config: G=" + String(g) + " B=" + String(b) + " S=" + String(s) + " | threads=" + String(n_workers))
-        var res = run_config(g, b, s, n_workers)
+        var src_degree = Int(args[1])
+        var gray_degree = Int(args[2])
+        var random_degree = Int(args[3])
+        var blur_degree = Int(args[4])
+        var sharp_degree = Int(args[5])
+        var sink_degree = Int(args[6])
+        print("  Image processing pipeline in Mojo: Source -> GrayScale -> Randomizer -> GaussianBlur -> Sharpen -> Sink")
+        print("  Configuration: Source=" + String(src_degree) + " GrayScale=" + String(gray_degree) + " Randomizer=" + String(random_degree) + " GaussianBlur=" + String(blur_degree) + " Sharpen=" + String(sharp_degree) + " Sink=" + String(sink_degree))
+        var res = run_config(src_degree, gray_degree, random_degree, blur_degree, sharp_degree, sink_degree)
         var n = res[0]; var ms = res[1]
         var tput = throughput(n, ms)
         print("Elapsed time: " + String(ms) + " ms")

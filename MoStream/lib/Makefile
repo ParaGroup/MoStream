@@ -6,9 +6,9 @@ CFLAGS  := -O3 -Wall -Wextra -fPIC -D_GNU_SOURCE
 LDFLAGS := -lpthread
 
 # Targets
-LIB     := libFuncC.so
-OBJ     := libFuncC.o
-SRC     := libFuncC.c
+LIB     := libpinning.so
+OBJ     := libpinning.o
+SRC     := libpinning.c
 
 # Default target
 all: $(LIB) $(OBJ)

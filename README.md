@@ -258,7 +258,8 @@ logical stage replicas is larger than the number of runtime worker threads.
 
 The cooperative runtime is especially useful when some stages frequently block
 on input or output. In that case, blocked actors do not need to occupy a worker
-thread while waiting.
+thread while waiting. Please, note that TRANSFORM_MANY stages are currently
+not supported with the cooperative runtime.
 
 ## Runtime Configuration
 

@@ -99,7 +99,7 @@ struct FourthStage(StageTrait):
 def main():
     var args = argv()
     if len(args) != 2:
-        print("Usage: ./test_pipe_4 <n_workers>")
+        print("Usage: ./test_pipe_3_coop <n_workers>")
         print("  n_workers = number of workers used by the cooperative scheduler")
         return
     # creating the stages

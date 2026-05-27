@@ -16,6 +16,7 @@
 from MoStream.stage import StageKind, StageTrait
 from MoStream.communicator import MessageTrait, Communicator, MessageWrapper
 from MoStream.utils import print_red_color
+from MoStream.emitter import Emitter, EmitterState
 
 # The actor activation might produce one of the following statuses:
 struct ActorStatus:
@@ -27,7 +28,7 @@ struct ActorStatus:
     comptime ERROR: UInt64 = 5 # error, will not be scheduled again
 
 # An actor associated with a pipeline node
-struct Actor[StageT: StageTrait](Copyable & ImplicitlyDestructible):
+struct Actor[StageT: StageTrait](Movable & ImplicitlyDestructible):
     var stage: Self.StageT
     var in_comm: UnsafePointer[Communicator[Self.StageT.InType], MutAnyOrigin]
     var out_comm: UnsafePointer[Communicator[Self.StageT.OutType], MutAnyOrigin]
@@ -63,12 +64,11 @@ struct Actor[StageT: StageTrait](Copyable & ImplicitlyDestructible):
 
     # retry pushing the pending output
     def retry_push_pending_output(mut self) -> Bool:
-        if not self.pending_output:
-            return True
-        var not_delivered = self.out_comm[].try_push(self.pending_output.take())
-        if not_delivered:
-            self.pending_output = not_delivered^
-            return False
+        if self.pending_output:
+            var not_delivered = self.out_comm[].try_push(self.pending_output.take())
+            if not_delivered:
+                self.pending_output = not_delivered^
+                return False
         return True
 
     # actor process (SOURCE)

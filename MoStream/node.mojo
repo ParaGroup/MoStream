@@ -19,7 +19,7 @@ from MoStream.actor import Actor
 from MoStream.utils import print_red_color
 
 # General trait of a pipeline node
-trait NodeTrait(Copyable & ImplicitlyDestructible):
+trait NodeTrait(Movable & ImplicitlyDestructible):
     comptime StageT: StageTrait
 
     # return the parallelism degree

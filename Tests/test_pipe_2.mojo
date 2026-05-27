@@ -13,9 +13,10 @@
 #  Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
 # ===------------------------------------------------------------------------=== #
 
-# Second test of a pipeline with 3 stages:
+# Second test of a pipeline with 3 stages using the standard runtime:
 #   - FirstStage: source generating numbers from 1 to 1000
-#   - SecondStage: stage producing two strings for each input number: "Value <number+1>" and "Value <(number+1)*2>"
+#   - SecondStage: stage producing two strings for each input number:
+#   "Value <number+1>" and "Value <(number+1)*2>"
 #   - ThirdStage: sink printing each input string received
 
 from std.collections import Optional
