@@ -338,7 +338,6 @@ struct RandomPixelRounds(StageTrait):
         return UInt8(Int(self.next_u64() % UInt64(256)))
 
     # compute_many implementation: emits 0..5 mutated versions of the input image by randomly changing some pixels
-    @always_inline
     def compute_many(mut self, var input: PPMImage, mut emitter: Emitter[PPMImage]) -> None:
         var t0 = perf_counter_ns()
         if not self.seeded:
