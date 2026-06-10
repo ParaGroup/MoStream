@@ -116,8 +116,8 @@ struct Scheduler[*Ts: NodeTrait]:
             failure_ordering=Ordering.RELAXED]
             (expected, ActorStatus.RUNNING)
 
-    # mark an actor as finished and ready to run again
-    def mark_ready(mut self, actor: ActorDescriptor):
+    # mark a running actor as ready to run
+    def mark_from_running_to_ready(mut self, actor: ActorDescriptor):
         var expected = ActorStatus.RUNNING
         if self.actor_states[actor.flat_id].compare_exchange[
             success_ordering=Ordering.RELEASE,
@@ -125,14 +125,23 @@ struct Scheduler[*Ts: NodeTrait]:
             (expected, ActorStatus.READY):
             self.ready_queue[].push(actor)
 
-    # mark an actor as done
-    def mark_done(mut self, actor: ActorDescriptor):
+    # mark a running actor as done
+    def mark_from_running_to_done(mut self, actor: ActorDescriptor):
         var expected = ActorStatus.RUNNING
         if self.actor_states[actor.flat_id].compare_exchange[
             success_ordering=Ordering.RELEASE,
             failure_ordering=Ordering.RELAXED]
             (expected, ActorStatus.DONE):
             _ = self.done_count[].fetch_add[ordering=Ordering.ACQUIRE_RELEASE](1) # ordering is safer, RELEASE should be still fine
+
+    # mark a blocked actor (BLOCKED_INPUT or BLOCKED_OUTPUT) as ready to run
+    def mark_from_blocked_to_ready(mut self, actor: ActorDescriptor, blocked_state: UInt64):
+        var expected = blocked_state
+        if self.actor_states[actor.flat_id].compare_exchange[
+            success_ordering=Ordering.RELEASE,
+            failure_ordering=Ordering.RELAXED,
+        ](expected, ActorStatus.READY):
+            self.ready_queue[].push(actor)
 
     # set an actor as busy (to protect parking logic)
     def set_busy(mut self, actor: ActorDescriptor) raises:
@@ -144,6 +153,7 @@ struct Scheduler[*Ts: NodeTrait]:
             print_yellow_color("MoStream Warning: actor " + String(actor.flat_id) + " is already busy in set_busy()")
             raise Error("error in set_busy()")
 
+    # set an actor as non-busy (to protect parking logic)
     def set_not_busy(mut self, actor: ActorDescriptor) raises:
         var expected = UInt64(1) # busy
         if not self.actor_busy[actor.flat_id].compare_exchange[
@@ -153,7 +163,7 @@ struct Scheduler[*Ts: NodeTrait]:
             print_yellow_color("MoStream Warning: actor " + String(actor.flat_id) + " is already not busy in set_not_busy()")
             raise Error("error in set_not_busy()")
 
-    # spin until the actor is not busy
+    # spin until the actor is busy
     def spin_until_not_busy(mut self, actor: ActorDescriptor):
         while self.actor_busy[actor.flat_id].load[ordering=Ordering.ACQUIRE]() == UInt64(1):
             continue
@@ -179,15 +189,6 @@ struct Scheduler[*Ts: NodeTrait]:
                 return nodes[i].actor_ref(actor.replica_idx)[].retry_push_pending_output()
         return False
 
-    # mark a blocked actor as ready to run
-    def mark_blocked_ready(mut self, actor: ActorDescriptor, blocked_state: UInt64):
-        var expected = blocked_state
-        if self.actor_states[actor.flat_id].compare_exchange[
-            success_ordering=Ordering.RELEASE,
-            failure_ordering=Ordering.RELAXED,
-        ](expected, ActorStatus.READY):
-            self.ready_queue[].push(actor)
-
     # check if the input communicator of an actor is closed
     def actor_input_is_closed(mut self, mut nodes: Tuple[*Self.Ts], actor: ActorDescriptor) raises -> Bool:
         comptime for i in range(len(Self.Ts)):
@@ -201,16 +202,6 @@ struct Scheduler[*Ts: NodeTrait]:
             if actor.stage_idx == i:
                 return nodes[i].actor_ref(actor.replica_idx)[].out_comm[].is_closed()
         return True
-
-    # check if an actor runs a TRANSFORM_MANY stage
-    def actor_is_transform_many(self, actor: ActorDescriptor) -> Bool:
-        comptime for i in range(len(Self.Ts)):
-            if actor.stage_idx == i:
-                comptime if Self.Ts[i].StageT.kind == StageKind.TRANSFORM_MANY:
-                    return True
-                else:
-                    return False
-        return False
 
     # try to wake an actor waiting on its input queue
     def wake_one_input_waiter(mut self, comm_idx: Int):
@@ -240,16 +231,6 @@ struct Scheduler[*Ts: NodeTrait]:
                 failure_ordering=Ordering.RELAXED]
                 (expected, ActorStatus.READY):
                 self.ready_queue[].push(actor)
-
-    # try to wake actors waiting on the same output queue
-    def wake_downstream_input_waiters(mut self, actor: ActorDescriptor):
-        if actor.stage_idx >= self.num_stages - 1: # return if it is a sink
-            return
-        var comm_idx = self.output_wait_queue_idx(actor)
-        if self.actor_is_transform_many(actor):
-            self.wake_all_input_waiters(comm_idx)
-        else:
-            self.wake_one_input_waiter(comm_idx)
 
     # try to wake an actor waiting on its output queue
     def wake_one_output_waiter(mut self, comm_idx: Int):
@@ -299,7 +280,7 @@ struct Scheduler[*Ts: NodeTrait]:
     # put the actor in the BLOCKING_INPUT state or mark it ready if already available
     def park_on_input_or_ready(mut self, mut nodes: Tuple[*Self.Ts], actor: ActorDescriptor) raises:
         if actor.stage_idx == 0:
-            self.mark_ready(actor)
+            self.mark_from_running_to_ready(actor)
             return
         var comm_idx = self.input_wait_queue_idx(actor)
         self.set_busy(actor) # protect
@@ -315,16 +296,16 @@ struct Scheduler[*Ts: NodeTrait]:
             self.try_make_room_input(comm_idx, 8)
             not_queued = self.wq_inputs[comm_idx].try_push(actor)
         if not_queued:
-            self.mark_blocked_ready(actor, ActorStatus.BLOCKED_INPUT)
+            self.mark_from_blocked_to_ready(actor, ActorStatus.BLOCKED_INPUT)
             self.set_not_busy(actor) # unprotect
             return
         if self.try_reserve_input_for_actor(nodes, actor):
             self.wake_one_output_waiter(comm_idx)
-            self.mark_blocked_ready(actor, ActorStatus.BLOCKED_INPUT)
+            self.mark_from_blocked_to_ready(actor, ActorStatus.BLOCKED_INPUT)
             self.set_not_busy(actor) # unprotect
             return
         if self.actor_input_is_closed(nodes, actor):
-            self.mark_blocked_ready(actor, ActorStatus.BLOCKED_INPUT)
+            self.mark_from_blocked_to_ready(actor, ActorStatus.BLOCKED_INPUT)
         self.set_not_busy(actor) # unprotect
 
     # put the actor in the BLOCKING_OUTPUT state or mark it ready if already available
@@ -343,37 +324,34 @@ struct Scheduler[*Ts: NodeTrait]:
             self.try_make_room_output(comm_idx, 8)
             not_queued = self.wq_outputs[comm_idx].try_push(actor)
         if not_queued:
-            self.mark_blocked_ready(actor, ActorStatus.BLOCKED_OUTPUT)
+            self.mark_from_blocked_to_ready(actor, ActorStatus.BLOCKED_OUTPUT)
             self.set_not_busy(actor) # unprotect
             return
         if self.retry_push_pending_output_for_actor(nodes, actor):
             self.wake_one_input_waiter(comm_idx)
-            self.mark_blocked_ready(actor, ActorStatus.BLOCKED_OUTPUT)
+            self.mark_from_blocked_to_ready(actor, ActorStatus.BLOCKED_OUTPUT)
         self.set_not_busy(actor) # unprotect
 
     # notification method after processing an actor returning READY
-    def notify_after_ready_activation(mut self, mut nodes: Tuple[*Self.Ts], actor: ActorDescriptor) raises:
+    def notify_after_ready(mut self, mut nodes: Tuple[*Self.Ts], actor: ActorDescriptor) raises:
         # the actor might have consumed an input, capacity may have been freed upstream
         if actor.stage_idx > 0: # if it is not a source
             self.wake_one_output_waiter(self.input_wait_queue_idx(actor))
         # the actor might have produced output(s), data may be available downstream
         if actor.stage_idx < self.num_stages - 1: # if it is not a sink
-            self.wake_downstream_input_waiters(actor)
+            self.wake_one_input_waiter(self.output_wait_queue_idx(actor))
 
     # notification method after processing an actor returning BLOCKED_INPUT
     def notify_after_blocked_input(mut self, mut nodes: Tuple[*Self.Ts], actor: ActorDescriptor) raises:
         # the actor might have produced output(s), data may be available downstream
         if actor.stage_idx < self.num_stages - 1: # if it is not a sink
-            self.wake_downstream_input_waiters(actor)
+            self.wake_one_input_waiter(self.output_wait_queue_idx(actor))
 
     # notification method after processing an actor returning BLOCKED_OUTPUT
     def notify_after_blocked_output(mut self, mut nodes: Tuple[*Self.Ts], actor: ActorDescriptor) raises:
         # the actor might have consumed an input, capacity may have been freed upstream
         if actor.stage_idx > 0: # if it is not a source
             self.wake_one_output_waiter(self.input_wait_queue_idx(actor))
-        # the actor may also have emitted other outputs before blocking, if the stage is TRANSFORM_MANY
-        if actor.stage_idx < self.num_stages - 1: # if it is not a sink
-            self.wake_downstream_input_waiters(actor)
 
     # notification method after processing an actor returning DONE
     def notify_after_done(mut self, mut nodes: Tuple[*Self.Ts], actor: ActorDescriptor) raises:
@@ -387,7 +365,7 @@ struct Scheduler[*Ts: NodeTrait]:
             if self.actor_output_is_closed(nodes, actor):
                 self.wake_all_input_waiters(self.output_wait_queue_idx(actor))
             else:
-                self.wake_downstream_input_waiters(actor)
+                self.wake_one_input_waiter(self.output_wait_queue_idx(actor))
 
     # main worker loop
     async
@@ -406,8 +384,8 @@ struct Scheduler[*Ts: NodeTrait]:
                 self.spin_until_not_busy(actor) # to avoid inter-mixing with the parking logic
                 var result = self.process_actor(nodes, actor)
                 if result == ActorStatus.READY:
-                    self.notify_after_ready_activation(nodes, actor)
-                    self.mark_ready(actor)
+                    self.notify_after_ready(nodes, actor)
+                    self.mark_from_running_to_ready(actor)
                 elif result == ActorStatus.BLOCKED_INPUT:
                     self.notify_after_blocked_input(nodes, actor)
                     self.park_on_input_or_ready(nodes, actor)
@@ -416,9 +394,9 @@ struct Scheduler[*Ts: NodeTrait]:
                     self.park_on_output_or_ready(nodes, actor)
                 elif result == ActorStatus.DONE:
                     self.notify_after_done(nodes, actor)
-                    self.mark_done(actor)
+                    self.mark_from_running_to_done(actor)
                 else:
-                    self.mark_done(actor)
+                    self.mark_from_running_to_done(actor)
         except e:
             print("Raised: " + String(e))
             exit(1)
