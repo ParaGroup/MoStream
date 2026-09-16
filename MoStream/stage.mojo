@@ -27,7 +27,7 @@ struct StageKind:
     comptime NOTDEFINED: Int = 4
 
 # Generic trait of stages in the pipeline, with default implementations that raise errors if not overridden
-trait StageTrait(Copyable & ImplicitlyDestructible):
+trait StageTrait(Copyable & Deinitable):
     comptime kind = StageKind.NOTDEFINED
     comptime InType: MessageTrait
     comptime OutType: MessageTrait

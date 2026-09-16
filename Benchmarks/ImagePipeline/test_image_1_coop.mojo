@@ -23,8 +23,11 @@
 
 from MoStream import Pipeline, seq, parallel
 from image_stages import TimedImageSource, Grayscale, GaussianBlur, Sharpen, ImageSink
+from std.atomic import Atomic, Ordering
 from std.time import perf_counter_ns
 from std.sys import argv
+from std.memory.alloc import unsafe_alloc
+from std.memory import Pointer
 
 comptime W: Int = 512
 comptime H: Int = 512
@@ -32,7 +35,7 @@ comptime DURATION: Int = 60
 comptime BASELINE_N: Int = 5000
 
 # Utility functions
-def elapsed_ms(t0: UInt) -> Float64:
+def elapsed_ms(t0: Int) -> Float64:
     return Float64(Int(perf_counter_ns() - t0)) / 1_000_000.0
 
 # Throughput in images per second
@@ -46,15 +49,17 @@ def run_config(src_degree: Int, gray_degree: Int, blur_degree: Int, sharp_degree
     var gray = Grayscale()
     var blur = GaussianBlur()
     var sharp = Sharpen()
-    var sink = ImageSink()
-    var count_ptr = sink.count_ptr
+    var count_ptr = unsafe_alloc[Atomic[DType.int64]](1)
+    count_ptr[] = Atomic[DType.int64](Int64(0))
+    var sink = ImageSink(count_ptr)
     var pipeline = Pipeline((parallel(source, src_degree), parallel(gray, gray_degree), parallel(blur, blur_degree), parallel(sharp, sharp_degree), parallel(sink, sink_degree)))
     pipeline.setPinning(True)
     var t0 = perf_counter_ns()
     pipeline.run_cooperative(n_workers)
     var ms = elapsed_ms(t0)
-    var n = count_ptr[]
-    count_ptr.free()
+    var n = Int(count_ptr[].load[ordering=Ordering.ACQUIRE]())
+    count_ptr.unsafe_deinit_pointee()
+    count_ptr.unsafe_free()
     _ = pipeline
     return (n, ms)
 

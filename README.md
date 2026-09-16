@@ -23,19 +23,20 @@ running a replica of the stage).
 - Source, transform, one-to-many transform, and sink stages.
 - Sequential nodes with `seq(stage)`.
 - Replicated parallel nodes with `parallel(stage, degree)`.
+- Standard and cooperative runtime backends.
 - Optional CPU pinning through a small C helper library.
 - Configurable communicators (e.g., customizable queue size).
 
 ## Requirements
 
-- Mojo toolchain (version >= 0.26.3)
+- Mojo toolchain (version >= 1.0.0)
 - A C compiler such as `gcc` for the CPU-affinity helper.
 - Linux-style pthread CPU affinity support for thread pinning.
 
 The current runtime expects the helper library at:
 
 ```text
-$MOSTREAM_HOME/MoStream/lib/libFuncC.so
+$MOSTREAM_HOME/MoStream/lib/libpinning.so
 ```
 
 ## Setup
@@ -180,10 +181,6 @@ The source stage must be the first pipeline stage, and the sink stage must be
 the last. The total number of node replicas must fit within Mojo's available
 async runtime parallelism.
 
-The source stage must be the first pipeline stage, and the sink stage must be
-the last. The total number of node replicas must fit within Mojo's available
-async runtime parallelism.
-
 ## Runtime Backends
 
 MoStream provides two execution runtimes: the standard runtime and the
@@ -215,10 +212,12 @@ creates one task for the source, two tasks for `stage_a`, four tasks for
 `stage_b`, and one task for the sink.
 
 Each task repeatedly executes the logic of its stage and communicates with the
-next/previous stage through bounded communicators. This runtime is simple
-and direct, but each node replica occupies one task for the whole lifetime of
-the pipeline. Therefore, the total number of node replicas should not exceed the
-parallelism available in Mojo's async runtime.
+next/previous stage through bounded communicators. Communication primitives
+perform busy-waiting with tight spin loops. This runtime is simple and direct
+but each node replica occupies one task for the whole lifetime of the pipeline,
+and the number of tasks cannot exceed the available parallelism (numer of threads)
+available in Mojo's async runtime. Therefore, conceptually we have a one-to-one
+mapping between nodes <-> tasks <-> threads.
 
 Use the standard runtime when the pipeline parallelism degree naturally matches
 the number of available runtime threads.
@@ -234,10 +233,11 @@ pipeline.run_cooperative(n_workers)
 where `n_workers` is the number of scheduler workers used to execute the
 pipeline actors.
 
-In this runtime, each node replica is represented as an actor. Actors do not own
-a runtime thread permanently. Instead, a smaller number of scheduler workers
-repeatedly pick ready actors, run one non-blocking activation, and then either
-reschedule the actor or park it if it cannot make progress.
+In this runtime, each node replica is represented as an actor. MoStream creates
+one task for each thread in the Mojo asynchronous runtime, and each task is
+expected to remain bound to the same thread throughout its execution. However,
+MoStream dynamically schedules actors onto this pool of tasks, allowing each task
+to execute different actors over its lifetime.
 
 For example:
 
@@ -252,13 +252,13 @@ var pipeline = Pipeline((
 pipeline.run_cooperative(4)
 ```
 
-creates many logical actors, but only four scheduler workers execute them. This
+creates many logical actors, but only four scheduler threads execute them. This
 allows MoStream to experiment with pipeline configurations where the number of
-logical stage replicas is larger than the number of runtime worker threads.
+logical stage replicas is larger than the available parallelism degree.
 
 The cooperative runtime is especially useful when some stages frequently block
 on input or output. In that case, blocked actors do not need to occupy a worker
-thread while waiting. Please, note that TRANSFORM_MANY stages are currently
+thread while waiting. Please, note that `TRANSFORM_MANY` stages are currently
 not supported with the cooperative runtime.
 
 ## Runtime Configuration

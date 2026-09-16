@@ -77,12 +77,12 @@ struct ThirdStage(StageTrait):
 # Main
 def main() raises:
     # creating the stages
-    first_stage = FirstStage()
-    second_stage = SecondStage()
-    third_stage = ThirdStage()
+    var first_stage = FirstStage()
+    var second_stage = SecondStage()
+    var third_stage = ThirdStage()
     # creating the pipeline and running it
     try:
-        pipeline = Pipeline((seq(first_stage), seq(second_stage), seq(third_stage)))
+        var pipeline = Pipeline((seq(first_stage), seq(second_stage), seq(third_stage)))
         pipeline.setPinning(enabled=False)
         pipeline.run()
     except e:

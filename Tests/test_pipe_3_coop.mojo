@@ -103,14 +103,14 @@ def main():
         print("  n_workers = number of workers used by the cooperative scheduler")
         return
     # creating the stages
-    first_stage = FirstStage()
-    second_stage = SecondStage()
-    third_stage = ThirdStage()
-    fourth_stage = FourthStage()
+    var first_stage = FirstStage()
+    var second_stage = SecondStage()
+    var third_stage = ThirdStage()
+    var fourth_stage = FourthStage()
     # creating the pipeline and running it
     try:
         var n_workers = Int(args[1])
-        pipeline = Pipeline((parallel(first_stage,2), parallel(second_stage, 2), parallel(third_stage, 3), parallel(fourth_stage, 3)))
+        var pipeline = Pipeline((parallel(first_stage,2), parallel(second_stage, 2), parallel(third_stage, 3), parallel(fourth_stage, 3)))
         pipeline.setPinning(enabled=False)        
         pipeline.run_cooperative(n_workers)
     except e:
