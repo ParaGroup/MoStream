@@ -17,11 +17,12 @@ from MoStream.MPMC_queue import MPMCQueue
 from std.collections import Optional
 from std.sys.info import size_of
 from std.atomic import Atomic, Ordering
-from std.memory import Reference
+from std.memory.alloc import unsafe_alloc
+from std.memory import Pointer
 from MoStream.utils import print_red_color
 
 # Trait of messages that can be sent through the Communicator
-comptime MessageTrait = Copyable & ImplicitlyDestructible
+comptime MessageTrait = Copyable & Deinitable
 
 # Wrapper of messages to include an end-of-stream flag
 struct MessageWrapper[T: MessageTrait](Copyable):
@@ -40,48 +41,48 @@ struct MessageWrapper[T: MessageTrait](Copyable):
 
 # Communicator that uses a lock-free MPMC queue to send messages between threads
 struct Communicator[T: MessageTrait](Movable):
-    var queue: UnsafePointer[MPMCQueue[MessageWrapper[Self.T]], MutExternalOrigin]
+    var queue: Pointer[MPMCQueue[MessageWrapper[Self.T]], MutUntrackedOrigin]
     var prodNum: Int # number of producers
     var consNum: Int # number of consumers
-    var destroyCount: UnsafePointer[Atomic[DType.int64], MutExternalOrigin]
-    var remainingProducers: UnsafePointer[Atomic[DType.int64], MutExternalOrigin]
-    var closed: UnsafePointer[Atomic[DType.int64], MutExternalOrigin]
+    var destroyCount: Pointer[Atomic[DType.int64], MutUntrackedOrigin]
+    var remainingProducers: Pointer[Atomic[DType.int64], MutUntrackedOrigin]
+    var closed: Pointer[Atomic[DType.int64], MutUntrackedOrigin]
 
     # constructor
     def __init__(out self, pN: Int, cN: Int, queue_size: Int) raises:
-        self.queue = alloc[MPMCQueue[MessageWrapper[Self.T]]](1)
-        self.queue.init_pointee_move(MPMCQueue[MessageWrapper[Self.T]](size=queue_size))
+        self.queue = unsafe_alloc[MPMCQueue[MessageWrapper[Self.T]]](1)
+        self.queue.unsafe_write(MPMCQueue[MessageWrapper[Self.T]](size=queue_size))
         self.prodNum = pN
         self.consNum = cN
-        self.destroyCount = alloc[Atomic[DType.int64]](1)
+        self.destroyCount = unsafe_alloc[Atomic[DType.int64]](1)
         self.destroyCount[] = Atomic[DType.int64](Int64(cN))
-        self.remainingProducers = alloc[Atomic[DType.int64]](1)
+        self.remainingProducers = unsafe_alloc[Atomic[DType.int64]](1)
         self.remainingProducers[] = Atomic[DType.int64](Int64(pN))
-        self.closed = alloc[Atomic[DType.int64]](1)
+        self.closed = unsafe_alloc[Atomic[DType.int64]](1)
         var initially_closed = Int64(0)
         if pN == 0:
             initially_closed = Int64(1)
         self.closed[] = Atomic[DType.int64](initially_closed)
 
     # move constructor
-    def __init__(out self, *, deinit take: Self):
-        self.queue = take.queue
-        self.prodNum = take.prodNum
-        self.consNum = take.consNum
-        self.destroyCount = take.destroyCount
-        self.remainingProducers = take.remainingProducers
-        self.closed = take.closed
+    def __init__(out self, *, deinit move: Self):
+        self.queue = move.queue
+        self.prodNum = move.prodNum
+        self.consNum = move.consNum
+        self.destroyCount = move.destroyCount
+        self.remainingProducers = move.remainingProducers
+        self.closed = move.closed
 
     # destructor
-    def __del__(deinit self):
-        self.queue.destroy_pointee()
-        self.queue.free()
-        self.destroyCount.destroy_pointee()
-        self.destroyCount.free()
-        self.remainingProducers.destroy_pointee()
-        self.remainingProducers.free()
-        self.closed.destroy_pointee()
-        self.closed.free()
+    def __deinit__(deinit self):
+        self.queue.unsafe_deinit_pointee()
+        self.queue.unsafe_free()
+        self.destroyCount.unsafe_deinit_pointee()
+        self.destroyCount.unsafe_free()
+        self.remainingProducers.unsafe_deinit_pointee()
+        self.remainingProducers.unsafe_free()
+        self.closed.unsafe_deinit_pointee()
+        self.closed.unsafe_free()
 
     # check if the communicator is closed (i.e., no more messages will be sent)
     def is_closed(mut self) -> Bool:
@@ -89,13 +90,13 @@ struct Communicator[T: MessageTrait](Movable):
 
     # signaling that a producer has finished sending messages (to coordinate the sending of end-of-stream messages)
     def producer_finished(mut self):
-        old_count = self.remainingProducers[].fetch_sub[ordering=Ordering.ACQUIRE_RELEASE](1)
+        var old_count = self.remainingProducers[].fetch_sub[ordering=Ordering.ACQUIRE_RELEASE](1)
         if old_count == Int64(1):
-            Atomic[DType.int64].store[ordering=Ordering.RELEASE](UnsafePointer(to=self.closed[].value), Int64(1))
+            Atomic[DType.int64].store[ordering=Ordering.RELEASE](Pointer(to=self.closed[].value), Int64(1))
 
     # check whether the Communicator can be safely destroyed
     def check_isDestroyable(mut self) -> Bool:
-        old_count = self.destroyCount[].fetch_sub[ordering=Ordering.ACQUIRE_RELEASE](1)
+        var old_count = self.destroyCount[].fetch_sub[ordering=Ordering.ACQUIRE_RELEASE](1)
         return old_count == Int64(1)
 
     # push (continuous retry until a message has been successfully pushed)
@@ -132,3 +133,18 @@ struct Communicator[T: MessageTrait](Movable):
     # get the estimated number of messages currently in the communicator
     def estimated_len(self) -> Int:
         return self.queue[].estimated_len()
+
+    # get the bounded communicator capacity
+    def capacity(self) -> Int:
+        return self.queue[].capacity()
+
+    # get estimated queue pressure as a percentage in [0, 100]
+    def pressure_percent(mut self) -> Int:
+        var cap = self.capacity()
+        if cap <= 0:
+            return 0
+        return (100 * self.estimated_len()) // cap
+
+    # true when no more real messages might arrive and the queue is empty
+    def is_drained(mut self) -> Bool:
+        return self.is_closed() and self.estimated_len() == 0

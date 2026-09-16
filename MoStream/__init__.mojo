@@ -17,3 +17,4 @@ from MoStream.emitter import Emitter
 from MoStream.stage import StageKind, StageTrait
 from MoStream.node import seq, parallel
 from MoStream.pipeline import Pipeline
+from MoStream.scheduler import AdaptiveConfig

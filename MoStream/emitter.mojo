@@ -18,7 +18,7 @@ from MoStream.communicator import MessageTrait, MessageWrapper, Communicator
 # Emitter, used by TRANSFORM_MANY stages to emit output elements for the current input element being processed
 @fieldwise_init
 struct Emitter[Out: MessageTrait]:
-    var outComm: UnsafePointer[Communicator[Self.Out], MutAnyOrigin]
+    var outComm: Pointer[Communicator[Self.Out], MutUntrackedOrigin]
 
     # produce a new output element for the current input element being processed
     #   by a TRANSFORM_MANY stage, by pushing it to the output communicator
