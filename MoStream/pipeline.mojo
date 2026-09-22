@@ -178,6 +178,9 @@ struct Pipeline[*Ts: NodeTrait]:
         if (n_workers > parallelism_level()):
             print_red_color("{MoStream} Error: the number of workers of the cooperative scheduler is greater than the number threads available in the thread pool!")
             raise Error("error in run_cooperative()")
+        if (n_workers <= 0):
+            print_red_color("{MoStream} Error: the number of workers of the cooperative scheduler must be greater than zero!")
+            raise Error("error in run_cooperative()")
         var pinning = "disabled"
         if self.coreslist.enabled:
             pinning = "enabled"
@@ -191,8 +194,8 @@ struct Pipeline[*Ts: NodeTrait]:
         print_cyan_color("{MoStream} Cooperative MoStream runtime is used with " + String(n_workers) + " threads")
         print_cyan_color("{MoStream} CPU pinning is " + pinning)
         print_cyan_color("{MoStream} Pipeline starts...")
-        var scheduler = Scheduler(self.nodes)
-        scheduler.start(self.nodes, n_workers, self.coreslist)
+        var scheduler = Scheduler(self.nodes, n_workers)
+        scheduler.start(self.nodes, self.coreslist)
         print_cyan_color("{MoStream} ...terminated successfully!")    
 
     # enable/disable pinning for the pipeline threads
