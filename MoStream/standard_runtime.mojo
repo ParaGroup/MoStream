@@ -26,14 +26,14 @@ from std.ffi import OwnedDLHandle, c_int
 # Executor_task: the function that will be run by each task of the pipeline,
 #   executing the logic of a stage and communicates with the other stages through the Communicators
 async def executor_task[NodeT: NodeTrait,
-                 In: MessageTrait,
-                 Out: MessageTrait, //,
-                 idx: Int,
-                 len: Int]
-                 (mut node: NodeT,
-                 inComm: Pointer[mut=True, Communicator[In], MutUntrackedOrigin],
-                 outComm: Pointer[mut=True, Communicator[Out], MutUntrackedOrigin],
-                 core_id: Int):
+                        In: MessageTrait,
+                        Out: MessageTrait, //,
+                        idx: Int,
+                        len: Int]
+                        (mut node: NodeT,
+                        inComm: Pointer[mut=True, Communicator[In], MutUntrackedOrigin],
+                        outComm: Pointer[mut=True, Communicator[Out], MutUntrackedOrigin],
+                        core_id: Int):
     try:
         var s = node.make_stage() # create a copy of the stage executed by this task
         # pinning of the underlying thread if pinning is enabled

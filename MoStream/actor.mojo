@@ -38,9 +38,9 @@ struct Actor[StageT: StageTrait](Movable & Deinitable):
 
     # constructor
     def __init__(out self,
-                stage: Self.StageT,
-                in_comm: Pointer[mut=True, Communicator[Self.StageT.InType], MutUntrackedOrigin],
-                out_comm: Pointer[mut=True, Communicator[Self.StageT.OutType], MutUntrackedOrigin]):
+                 stage: Self.StageT,
+                 in_comm: Pointer[mut=True, Communicator[Self.StageT.InType], MutUntrackedOrigin],
+                 out_comm: Pointer[mut=True, Communicator[Self.StageT.OutType], MutUntrackedOrigin]):
         self.stage = stage.copy()
         self.in_comm = in_comm
         self.out_comm = out_comm

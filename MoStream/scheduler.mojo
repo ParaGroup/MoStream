@@ -15,6 +15,7 @@
 
 from std.atomic import Atomic, Ordering
 from MoStream.MPMC_queue import MPMCQueue
+from MoStream.ready_queue import ReadyQueueBackend, ReadyQueueResult
 from MoStream.actor import ActorStatus
 from MoStream.pipeline import CoresList, pin_thread_to_cpu
 from MoStream.node import NodeTrait, SeqNode, ParallelNode
@@ -37,11 +38,12 @@ struct ActorDescriptor(ImplicitlyCopyable):
         self.flat_id = flat_id
 
 # Scheduler
-struct Scheduler[*Ts: NodeTrait]:
+struct Scheduler[ReadyQueues: ReadyQueueBackend, *Ts: NodeTrait]:
     var num_stages: Int # number of stages in the pipeline
     var total_actors: Int # total number of actors in the pipeline (sum of parallelism degrees of all stages)
     var num_workers: Int # number of workers used by the cooperative scheduler
-    var ready_queues: Pointer[MPMCQueue[ActorDescriptor], MutUntrackedOrigin] # one ready queue for each worker
+    var ready_queues: Self.ReadyQueues # one ready queue for each worker
+    var actor_descriptors: Pointer[ActorDescriptor, MutUntrackedOrigin] # array of actor descriptors indexed by flat actor ID
     var wq_inputs: Pointer[MPMCQueue[ActorDescriptor], MutUntrackedOrigin] # array of wait queues for actors waiting on input
     var wq_outputs: Pointer[MPMCQueue[ActorDescriptor], MutUntrackedOrigin] # array of wait queues for actors waiting on output
     var actor_states: Pointer[Atomic[DType.uint64], MutUntrackedOrigin] # array of atomic variables representing the state of each actor
@@ -49,24 +51,24 @@ struct Scheduler[*Ts: NodeTrait]:
     var actor_busy: Pointer[Atomic[DType.uint64], MutUntrackedOrigin] # array of atomic flags to protect parking logic
 
     # constructor
-    def __init__(out self, mut nodes: Tuple[*Self.Ts], num_workers: Int) raises:
+    def __init__(out self, mut nodes: Tuple[*Self.Ts], num_workers: Int, var ready_queues: Self.ReadyQueues) raises:
         self.num_stages = len(Self.Ts)
         self.total_actors = 0
         self.num_workers = num_workers
+        self.ready_queues = ready_queues^
         comptime for i in range(len(Self.Ts)):
             self.total_actors += nodes[i].parallelism()
-        var actors_per_worker = (self.total_actors + self.num_workers - 1) // self.num_workers
-        var ready_queue_size = 2
-        while ready_queue_size < actors_per_worker:
-            ready_queue_size <<= 1
-        self.ready_queues = unsafe_alloc[MPMCQueue[ActorDescriptor]](self.num_workers)
-        for i in range(self.num_workers):
-            self.ready_queues.unsafe_offset(i).unsafe_write(MPMCQueue[ActorDescriptor](ready_queue_size))
+        self.actor_descriptors = unsafe_alloc[ActorDescriptor](self.total_actors)
+        var flat_id = 0
+        comptime for stage_idx in range(len(Self.Ts)):
+            for replica_idx in range(nodes[stage_idx].parallelism()):
+                self.actor_descriptors.unsafe_offset(flat_id).unsafe_write(ActorDescriptor(stage_idx, replica_idx, flat_id))
+                flat_id += 1
         self.wq_inputs = unsafe_alloc[MPMCQueue[ActorDescriptor]](self.num_stages)
         self.wq_outputs = unsafe_alloc[MPMCQueue[ActorDescriptor]](self.num_stages)
         for i in range(self.num_stages):
-            self.wq_inputs.unsafe_offset(i).unsafe_write(MPMCQueue[ActorDescriptor](1048576))
-            self.wq_outputs.unsafe_offset(i).unsafe_write(MPMCQueue[ActorDescriptor](1048576))
+            self.wq_inputs.unsafe_offset(i).unsafe_write(MPMCQueue[ActorDescriptor](1048576)) # how to compute this size?
+            self.wq_outputs.unsafe_offset(i).unsafe_write(MPMCQueue[ActorDescriptor](1048576)) # how to compute this size?
         self.actor_states = unsafe_alloc[Atomic[DType.uint64]](self.total_actors)
         for i in range(self.total_actors):
             self.actor_states.unsafe_offset(i)[] = Atomic[DType.uint64](ActorStatus.READY)
@@ -78,9 +80,9 @@ struct Scheduler[*Ts: NodeTrait]:
 
     # destructor
     def __deinit__(deinit self):
-        for i in range(self.num_workers):
-            self.ready_queues.unsafe_offset(i).unsafe_deinit_pointee()
-        self.ready_queues.unsafe_free()
+        for i in range(self.total_actors):
+            self.actor_descriptors.unsafe_offset(i).unsafe_deinit_pointee()
+        self.actor_descriptors.unsafe_free()
         for i in range(self.num_stages):
             self.wq_inputs.unsafe_offset(i).unsafe_deinit_pointee()
             self.wq_outputs.unsafe_offset(i).unsafe_deinit_pointee()
@@ -95,37 +97,20 @@ struct Scheduler[*Ts: NodeTrait]:
             self.actor_busy.unsafe_offset(i).unsafe_deinit_pointee()
         self.actor_busy.unsafe_free()
 
-    # compute flat actor id from stage and replica without storing offsets
-    def flat_actor_id(mut self, mut nodes: Tuple[*Self.Ts], stage_idx: Int, replica_idx: Int) -> Int:
-        var flat_id = 0
-        comptime for i in range(len(Self.Ts)):
-            if i < stage_idx:
-                flat_id += nodes[i].parallelism()
-        return flat_id + replica_idx
+    # make an actor ready to run
+    def schedule_actor(mut self, actor: ActorDescriptor, worker_id: Int):
+        if not self.ready_queues.push_local(worker_id, Int64(actor.flat_id)):
+            print_red_color("{MoStream} Error: cooperative ready queue is full!")
+            exit(1)
 
-    # enqueue an actor on the preferred worker, probing other queues if needed
-    def schedule_actor(mut self, actor: ActorDescriptor, preferred_worker: Int):
-        while True:
-            for offset in range(self.num_workers):
-                var worker_idx = (preferred_worker + offset) % self.num_workers
-                var not_queued = self.ready_queues.unsafe_offset(worker_idx)[].try_push(actor)
-                if not not_queued:
-                    return
+    # make all actors ready to run (only used at the beginning of the execution)
+    def enqueue_all_actors(mut self):
+        for flat_id in range(self.total_actors):
+            self.schedule_actor(self.actor_descriptors.unsafe_offset(flat_id)[], flat_id % self.num_workers)
 
-    # enqueue all actors, distributing initial work among workers
-    def enqueue_all_actors(mut self, mut nodes: Tuple[*Self.Ts]):
-        comptime for i in range(len(Self.Ts)):
-            var par_degree = nodes[i].parallelism()
-            for j in range(par_degree):
-                var flat_id = self.flat_actor_id(nodes, i, j)
-                self.schedule_actor(
-                    ActorDescriptor(stage_idx=i, replica_idx=j, flat_id=flat_id),
-                    flat_id % self.num_workers,
-                )
-
-    # start the scheduler in normal cooperative mode
+    # start the scheduler in cooperative mode
     def start(mut self, mut nodes: Tuple[*Self.Ts], mut coreslist: CoresList):
-        self.enqueue_all_actors(nodes)
+        self.enqueue_all_actors()
         var tg = TaskGroup()
         for worker_id in range(0, self.num_workers):
             var core_id = coreslist.get_next_core_id()
@@ -404,16 +389,16 @@ struct Scheduler[*Ts: NodeTrait]:
 
     # pop local work first, then steal from other workers in rotating order
     def try_get_actor(mut self, worker_id: Int, first_victim: Int) -> Optional[ActorDescriptor]:
-        var maybe_actor = self.ready_queues.unsafe_offset(worker_id)[].try_pop()
-        if maybe_actor:
-            return maybe_actor^
+        var result = self.ready_queues.pop_local(worker_id)
+        if result.status == ReadyQueueResult.SUCCESS:
+            return Optional(self.actor_descriptors.unsafe_offset(Int(result.actor_id))[])
         for offset in range(self.num_workers):
             var victim = (first_victim + offset) % self.num_workers
             if victim == worker_id:
                 continue
-            maybe_actor = self.ready_queues.unsafe_offset(victim)[].try_pop()
-            if maybe_actor:
-                return maybe_actor^
+            result = self.ready_queues.steal_from(victim)
+            if result.status == ReadyQueueResult.SUCCESS:
+                return Optional(self.actor_descriptors.unsafe_offset(Int(result.actor_id))[])
         return None
 
     # main worker loop

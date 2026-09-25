@@ -21,7 +21,7 @@
 #   - ImageSink: receives processed images, counts them, and prints final stats on EOS
 #   The intermediate stages can be parallel, the source and sink are always single-threaded.
 
-from MoStream import Pipeline, seq, parallel
+from MoStream import Pipeline, ReadyQueueKind, seq, parallel
 from image_stages import TimedImageSource, Grayscale, GaussianBlur, Sharpen, ImageSink
 from std.atomic import Atomic, Ordering
 from std.time import perf_counter_ns
@@ -44,7 +44,13 @@ def throughput(n: Int, ms: Float64) -> Float64:
     return Float64(n) / (ms / 1000.0)
 
 # Run a given configuration of the pipeline
-def run_config(src_degree: Int, gray_degree: Int, blur_degree: Int, sharp_degree: Int, sink_degree: Int, n_workers: Int) raises -> Tuple[Int, Float64]:
+def run_config(src_degree: Int,
+               gray_degree: Int,
+               blur_degree: Int,
+               sharp_degree: Int,
+               sink_degree: Int,
+               n_workers: Int,
+               ready_queue_kind: Int) raises -> Tuple[Int, Float64]:
     var source = TimedImageSource[W, H, DURATION]()
     var gray = Grayscale()
     var blur = GaussianBlur()
@@ -55,7 +61,7 @@ def run_config(src_degree: Int, gray_degree: Int, blur_degree: Int, sharp_degree
     var pipeline = Pipeline((parallel(source, src_degree), parallel(gray, gray_degree), parallel(blur, blur_degree), parallel(sharp, sharp_degree), parallel(sink, sink_degree)))
     pipeline.setPinning(True)
     var t0 = perf_counter_ns()
-    pipeline.run_cooperative(n_workers)
+    pipeline.run_cooperative(n_workers, ready_queue_kind)
     var ms = elapsed_ms(t0)
     var n = Int(count_ptr[].load[ordering=Ordering.ACQUIRE]())
     count_ptr.unsafe_deinit_pointee()
@@ -66,8 +72,8 @@ def run_config(src_degree: Int, gray_degree: Int, blur_degree: Int, sharp_degree
 # Main
 def main():
     var args = argv()
-    if len(args) != 7:
-        print("Usage: ./test_image_coop <Source> <GrayScale> <GaussianBlur> <Sharpen> <Sink> <n_workers>")
+    if len(args) < 7 or len(args) > 8:
+        print("Usage: ./test_image_coop <Source> <GrayScale> <GaussianBlur> <Sharpen> <Sink> <n_workers> [mpmc|work-stealing]")
         return
     try:
         var src_degree = Int(args[1])
@@ -76,9 +82,22 @@ def main():
         var sharp_degree = Int(args[4])
         var sink_degree = Int(args[5])
         var n_workers = Int(args[6])
+        var ready_queue_kind = ReadyQueueKind.MPMC
+        if len(args) == 8:
+            if args[7] == "work-stealing":
+                ready_queue_kind = ReadyQueueKind.WORK_STEALING
+            elif args[7] != "mpmc":
+                print("Invalid ready queue kind: ", args[7])
+                return
         print("  Image processing pipeline in Mojo: Source -> GrayScale -> GaussianBlur -> Sharpen -> Sink")
         print("  Configuration: Source=" + String(src_degree) + " GrayScale=" + String(gray_degree) + " GaussianBlur=" + String(blur_degree) + " Sharpen=" + String(sharp_degree) + " Sink=" + String(sink_degree) + " n_workers=" + String(n_workers))
-        var res = run_config(src_degree, gray_degree, blur_degree, sharp_degree, sink_degree, n_workers)
+        var res = run_config(src_degree,
+                             gray_degree,
+                             blur_degree,
+                             sharp_degree,
+                             sink_degree,
+                             n_workers,
+                             ready_queue_kind)
         var n = res[0]; var ms = res[1]
         var tput = throughput(n, ms)
         print("Elapsed time: " + String(ms) + " ms")
