@@ -28,8 +28,8 @@ from std.sys import argv
 from std.memory.alloc import unsafe_alloc
 from std.memory import Pointer
 
-comptime W: Int = 512
-comptime H: Int = 512
+comptime W: Int = 32
+comptime H: Int = 32
 comptime DURATION: Int = 60
 comptime BASELINE_N: Int = 5000
 
