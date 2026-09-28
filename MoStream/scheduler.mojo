@@ -399,19 +399,19 @@ struct Scheduler[*Ts: NodeTrait]:
                 for i in range(max_rounds):
                     var result = self.process_actor(nodes, actor)
                     if result == ActorStatus.READY:
-                        self.notify_after_ready(nodes, actor, worker_id)
+                        self.notify_after_ready(nodes, actor)
                         if (i == max_rounds - 1):
-                            self.mark_from_running_to_ready(actor, worker_id)
+                            self.mark_from_running_to_ready(actor)
                     elif result == ActorStatus.BLOCKED_INPUT:
-                        self.notify_after_blocked_input(nodes, actor, worker_id)
-                        self.park_on_input_or_ready(nodes, actor, worker_id)
+                        self.notify_after_blocked_input(nodes, actor)
+                        self.park_on_input_or_ready(nodes, actor)
                         break
                     elif result == ActorStatus.BLOCKED_OUTPUT:
-                        self.notify_after_blocked_output(nodes, actor, worker_id)
-                        self.park_on_output_or_ready(nodes, actor, worker_id)
+                        self.notify_after_blocked_output(nodes, actor)
+                        self.park_on_output_or_ready(nodes, actor)
                         break
                     elif result == ActorStatus.DONE:
-                        self.notify_after_done(nodes, actor, worker_id)
+                        self.notify_after_done(nodes, actor)
                         self.mark_from_running_to_done(actor)
                         break
                     else:
