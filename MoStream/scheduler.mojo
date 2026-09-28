@@ -416,21 +416,29 @@ struct Scheduler[ReadyQueues: ReadyQueueBackend, *Ts: NodeTrait]:
                 if not self.try_start_actor(actor):
                     continue
                 self.spin_until_not_busy(actor) # to avoid inter-mixing with the parking logic
-                var result = self.process_actor(nodes, actor)
-                if result == ActorStatus.READY:
-                    self.notify_after_ready(nodes, actor, worker_id)
-                    self.mark_from_running_to_ready(actor, worker_id)
-                elif result == ActorStatus.BLOCKED_INPUT:
-                    self.notify_after_blocked_input(nodes, actor, worker_id)
-                    self.park_on_input_or_ready(nodes, actor, worker_id)
-                elif result == ActorStatus.BLOCKED_OUTPUT:
-                    self.notify_after_blocked_output(nodes, actor, worker_id)
-                    self.park_on_output_or_ready(nodes, actor, worker_id)
-                elif result == ActorStatus.DONE:
-                    self.notify_after_done(nodes, actor, worker_id)
-                    self.mark_from_running_to_done(actor)
-                else:
-                    self.mark_from_running_to_done(actor)
+                var max_rounds = 1 # rounds represent a sort of quantum assigned to a ready actor
+                for i in range(max_rounds):
+                    var result = self.process_actor(nodes, actor)
+                    if result == ActorStatus.READY:
+                        self.notify_after_ready(nodes, actor, worker_id)
+                        if (i == max_rounds - 1):
+                            self.mark_from_running_to_ready(actor, worker_id)
+                    elif result == ActorStatus.BLOCKED_INPUT:
+                        self.notify_after_blocked_input(nodes, actor, worker_id)
+                        self.park_on_input_or_ready(nodes, actor, worker_id)
+                        break
+                    elif result == ActorStatus.BLOCKED_OUTPUT:
+                        self.notify_after_blocked_output(nodes, actor, worker_id)
+                        self.park_on_output_or_ready(nodes, actor, worker_id)
+                        break
+                    elif result == ActorStatus.DONE:
+                        self.notify_after_done(nodes, actor, worker_id)
+                        self.mark_from_running_to_done(actor)
+                        break
+                    else:
+                        self.mark_from_running_to_done(actor)
+                        break
         except e:
             print("Raised: " + String(e))
             exit(1)
+
