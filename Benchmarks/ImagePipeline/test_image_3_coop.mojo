@@ -70,7 +70,7 @@ def run_config(src_degree: Int,
 def main():
     var args = argv()
     if len(args) < 6 or len(args) > 7:
-        print("Usage: ./test_image_coop <Source> <Alternate1> <Alternate2> <Sink> <Workers> [mpmc|work-stealing]")
+        print("Usage: ./test_image_coop <Source> <Alternate1> <Alternate2> <Sink> <Workers> [mpmc]")
         return
     try:
         var src_degree = Int(args[1])
@@ -80,9 +80,7 @@ def main():
         var n_workers = Int(args[5])
         var ready_queue_kind = ReadyQueueKind.MPMC
         if len(args) == 7:
-            if args[6] == "work-stealing":
-                ready_queue_kind = ReadyQueueKind.WORK_STEALING
-            elif args[6] != "mpmc":
+            if args[6] != "mpmc":
                 print("Invalid ready queue kind: ", args[6])
                 return
         print("  Image processing pipeline in Mojo: Source -> AlternatingFilterStage -> AlternatingFilterStage -> Sink")

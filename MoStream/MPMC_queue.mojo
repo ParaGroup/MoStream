@@ -88,6 +88,24 @@ struct MPMCQueue[T: Copyable & Deinitable](Movable):
             self.buffer.unsafe_offset(i).unsafe_deinit_pointee()
         self.buffer.unsafe_free()
 
+    # Approximate occupancy snapshot for scheduling heuristics. These relaxed
+    # loads observe the queue's existing positions and add no counter updates
+    # to the push/pop paths
+    @always_inline
+    def approximate_size(mut self) -> UInt64:
+        var dequeue_position = self.dequeue_pos.atomicVal.load[
+            ordering=Ordering.RELAXED
+        ]()
+        var enqueue_position = self.enqueue_pos.atomicVal.load[
+            ordering=Ordering.RELAXED
+        ]()
+        if enqueue_position <= dequeue_position:
+            return 0
+        var observed = enqueue_position - dequeue_position
+        if observed > self.size:
+            return self.size
+        return observed
+
     # push method for producers, continuously retries until the item has been successfully pushed into the queue
     def push(mut self, var item: Self.T):
         var pw: UInt64

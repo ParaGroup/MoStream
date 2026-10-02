@@ -47,6 +47,7 @@ struct Communicator[T: MessageTrait](Movable):
     var destroyCount: Pointer[Atomic[DType.int64], MutUntrackedOrigin]
     var remainingProducers: Pointer[Atomic[DType.int64], MutUntrackedOrigin]
     var closed: Pointer[Atomic[DType.int64], MutUntrackedOrigin]
+    var queue_capacity: Int64
 
     # constructor
     def __init__(out self, pN: Int, cN: Int, queue_size: Int) raises:
@@ -59,6 +60,7 @@ struct Communicator[T: MessageTrait](Movable):
         self.remainingProducers = unsafe_alloc[Atomic[DType.int64]](1)
         self.remainingProducers[] = Atomic[DType.int64](Int64(pN))
         self.closed = unsafe_alloc[Atomic[DType.int64]](1)
+        self.queue_capacity = Int64(queue_size)
         var initially_closed = Int64(0)
         if pN == 0:
             initially_closed = Int64(1)
@@ -72,6 +74,7 @@ struct Communicator[T: MessageTrait](Movable):
         self.destroyCount = move.destroyCount
         self.remainingProducers = move.remainingProducers
         self.closed = move.closed
+        self.queue_capacity = move.queue_capacity
 
     # destructor
     def __deinit__(deinit self):
@@ -88,6 +91,14 @@ struct Communicator[T: MessageTrait](Movable):
     def is_closed(mut self) -> Bool:
         return self.closed[].load[ordering=Ordering.ACQUIRE]() == Int64(1)
 
+    # approximate number of messages currently stored in the queue
+    def current_size(mut self) -> Int64:
+        return Int64(self.queue[].approximate_size())
+
+    # normalized queue occupancy used as a scheduler hint
+    def fill_ratio(mut self) -> Float64:
+        return Float64(self.current_size()) / Float64(self.queue_capacity)
+
     # signaling that a producer has finished sending messages (to coordinate the sending of end-of-stream messages)
     def producer_finished(mut self):
         var old_count = self.remainingProducers[].fetch_sub[ordering=Ordering.ACQUIRE_RELEASE](1)
@@ -101,7 +112,7 @@ struct Communicator[T: MessageTrait](Movable):
 
     # push (continuous retry until a message has been successfully pushed)
     def push(mut self, var msg: MessageWrapper[Self.T]):
-        _ = self.queue[].push(msg^)
+        self.queue[].push(msg^)
 
     # try_push (returns None if the message has been successfully pushed, or the message itself if the queue is currently full)
     def try_push(mut self, var msg: MessageWrapper[Self.T]) -> Optional[MessageWrapper[Self.T]]:

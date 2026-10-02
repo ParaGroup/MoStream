@@ -25,7 +25,6 @@ from std.runtime.asyncrt import TaskGroup
 from std.sys.info import size_of
 from std.testing import assert_equal, assert_false, assert_true, TestSuite
 
-
 # record that an actor has seen and claimed a work item
 def record_actor(
     actor_id: Int64,
@@ -36,7 +35,6 @@ def record_actor(
         ordering=Ordering.RELAXED
     ](1)
     _ = claimed[].fetch_add[ordering=Ordering.RELAXED](1)
-
 
 # steal work items from the deque until it is empty
 async def steal_until_empty(
@@ -50,7 +48,6 @@ async def steal_until_empty(
             record_actor(result.actor_id, seen, claimed)
         elif result.status == WorkStealResult.EMPTY:
             return
-
 
 # test that the owner pops items in LIFO order
 def test_owner_lifo_order() raises:
@@ -67,7 +64,6 @@ def test_owner_lifo_order() raises:
     assert_equal(result.actor_id, Int64(10))
     assert_equal(deque.pop_bottom().status, WorkStealResult.EMPTY)
 
-
 # test that thieves steal items in FIFO order
 def test_thief_fifo_order() raises:
     var deque = WorkStealingDeque(8)
@@ -83,7 +79,6 @@ def test_thief_fifo_order() raises:
     assert_equal(result.actor_id, Int64(30))
     assert_equal(deque.steal_top().status, WorkStealResult.EMPTY)
 
-
 # test that the owner and a thief can pop and steal from opposite ends of the deque
 def test_owner_and_thief_opposite_ends() raises:
     var deque = WorkStealingDeque(8)
@@ -97,7 +92,6 @@ def test_owner_and_thief_opposite_ends() raises:
     assert_equal(deque.pop_bottom().actor_id, Int64(2))
     assert_equal(deque.size(), 0)
 
-
 #  test that the owner cannot push more items than the capacity of the deque
 def test_fixed_capacity_leaves_one_slot_unused() raises:
     var deque = WorkStealingDeque(4)
@@ -106,11 +100,9 @@ def test_fixed_capacity_leaves_one_slot_unused() raises:
     assert_true(deque.push_bottom(3))
     assert_false(deque.push_bottom(4))
 
-
 # test that the owner and multiple thieves can claim each actor exactly once
 def test_indexes_are_cache_line_spaced() raises:
     assert_equal(size_of[PaddedAtomicI64](), 64)
-
 
 # test that the owner and multiple thieves can claim each actor exactly once
 def test_owner_and_multiple_thieves_claim_each_actor_once() raises:
@@ -146,7 +138,6 @@ def test_owner_and_multiple_thieves_claim_each_actor_once() raises:
     claimed.unsafe_free()
     seen.unsafe_free()
 
-
-# main
+# Main
 def main() raises:
     TestSuite.discover_tests[__functions_in_module()]().run()

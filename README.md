@@ -231,20 +231,21 @@ pipeline.run_cooperative(n_workers)
 ```
 
 where `n_workers` is the number of scheduler workers used to execute the
-pipeline actors. By default, each worker uses an MPMC ready queue. The ready
-queue implementation can be selected explicitly without changing the pipeline:
+pipeline actors. The scheduler maintains one shared MPMC ready queue for each
+pipeline stage. The MPMC backend can also be selected explicitly:
 
 ```mojo
 from MoStream import ReadyQueueKind
 
 pipeline.run_cooperative(4, ReadyQueueKind.MPMC)
-pipeline.run_cooperative(4, ReadyQueueKind.WORK_STEALING)
 ```
 
-Both backends schedule newly ready actors on the current worker, consume local
-work first, and inspect other workers only when stealing. The MPMC backend uses
-FIFO queues; the work-stealing backend uses Chase-Lev deques with LIFO local
-pops and FIFO steals.
+When a worker needs an actor, it considers stages whose ready queue is nonempty.
+For each eligible stage, it computes `input_fill * output_free` from the bounded
+communicators and selects the stage with the highest score. Sources use an
+implicit input fill of one, while sinks use an implicit output fill of zero. If
+another worker consumes the selected actor first, stage eligibility and
+priorities are recomputed.
 
 In this runtime, each node replica is represented as an actor. MoStream creates
 one task for each thread in the Mojo asynchronous runtime, and each task is

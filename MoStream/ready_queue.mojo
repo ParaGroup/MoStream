@@ -15,10 +15,11 @@
 
 from MoStream.MPMC_queue import MPMCQueue
 from MoStream.work_stealing_deque import WorkStealingDeque, WorkStealResult
+from std.atomic import Atomic, Ordering
 from std.memory import Pointer
 from std.memory.alloc import unsafe_alloc
 
-# Ready-queue implementations available to the cooperative scheduler.
+# Ready-queue implementations available to the cooperative scheduler
 struct ReadyQueueKind:
     comptime MPMC: Int = 0
     comptime WORK_STEALING: Int = 1
@@ -52,8 +53,8 @@ struct ReadyQueueResult(ImplicitlyCopyable):
         return ReadyQueueResult(ReadyQueueResult.RETRY)
 
 # Interface used by Scheduler. Only the owning worker may push or pop locally;
-# other workers access a queue through steal_from.
-trait ReadyQueueBackend(Movable & Deinitable):
+# other workers access a queue through steal_from
+trait ReadyQueueBackend(Movable & Deinitable): # NO LONGER USED BY THE COOPERATIVE RUNTIME (LEGACY)
     # push an actor ID onto the local queue. Returns true if successful, false if the queue is full
     def push_local(mut self, worker_id: Int, actor_id: Int64) -> Bool:
         ...
@@ -66,6 +67,21 @@ trait ReadyQueueBackend(Movable & Deinitable):
     def steal_from(mut self, victim_id: Int) -> ReadyQueueResult:
         ...
 
+# Interface used by the pressure-aware scheduler. Every queue is shared by all
+# workers and contains the ready actors belonging to one pipeline stage
+trait StageReadyQueueBackend(Movable & Deinitable):
+    # push an actor ID onto its stage queue
+    def push_stage(mut self, stage_idx: Int, actor_id: Int64) -> Bool:
+        ...
+
+    # pop an actor ID from a stage queue
+    def pop_stage(mut self, stage_idx: Int) -> ReadyQueueResult:
+        ...
+
+    # approximate count used only to identify stages that may be eligible
+    def ready_count(mut self, stage_idx: Int) -> Int64:
+        ...
+
 # Round up to a power of two. The extra slot is required by WorkStealingDeque
 def ready_queue_capacity(total_actors: Int) -> Int:
     var capacity = 2
@@ -73,8 +89,61 @@ def ready_queue_capacity(total_actors: Int) -> Int:
         capacity <<= 1
     return capacity
 
+# Shared bounded MPMC ready queue for every pipeline stage
+struct StageMPMCReadyQueues(StageReadyQueueBackend):
+    var queues: Pointer[MPMCQueue[Int64], MutUntrackedOrigin]
+    var ready_counts: Pointer[Atomic[DType.int64], MutUntrackedOrigin]
+    var num_stages: Int
+
+    # constructor
+    def __init__(out self, num_stages: Int, capacity: Int) raises:
+        self.num_stages = num_stages
+        self.queues = unsafe_alloc[MPMCQueue[Int64]](num_stages)
+        self.ready_counts = unsafe_alloc[Atomic[DType.int64]](num_stages)
+        for stage_idx in range(num_stages):
+            self.queues.unsafe_offset(stage_idx).unsafe_write(MPMCQueue[Int64](capacity))
+            self.ready_counts.unsafe_offset(stage_idx)[] = Atomic[DType.int64](0)
+
+    # move constructor
+    def __init__(out self, *, deinit move: Self):
+        self.queues = move.queues
+        self.ready_counts = move.ready_counts
+        self.num_stages = move.num_stages
+
+    # destructor
+    def __deinit__(deinit self):
+        for stage_idx in range(self.num_stages):
+            self.queues.unsafe_offset(stage_idx).unsafe_deinit_pointee()
+            self.ready_counts.unsafe_offset(stage_idx).unsafe_deinit_pointee()
+        self.queues.unsafe_free()
+        self.ready_counts.unsafe_free()
+
+    # push an actor ID and publish the stage as eligible
+    def push_stage(mut self, stage_idx: Int, actor_id: Int64) -> Bool:
+        self.queues.unsafe_offset(stage_idx)[].push(actor_id)
+        _ = self.ready_counts.unsafe_offset(stage_idx)[].fetch_add[
+            ordering=Ordering.RELEASE
+        ](1)
+        return True
+
+    # pop an actor ID and update the approximate eligibility count
+    def pop_stage(mut self, stage_idx: Int) -> ReadyQueueResult:
+        var actor_id = self.queues.unsafe_offset(stage_idx)[].try_pop()
+        if actor_id:
+            _ = self.ready_counts.unsafe_offset(stage_idx)[].fetch_sub[
+                ordering=Ordering.ACQUIRE_RELEASE
+            ](1)
+            return ReadyQueueResult.success(actor_id.take())
+        return ReadyQueueResult.empty()
+
+    # return the approximate number of ready actors in a stage queue
+    def ready_count(mut self, stage_idx: Int) -> Int64:
+        return self.ready_counts.unsafe_offset(stage_idx)[].load[
+            ordering=Ordering.ACQUIRE
+        ]()
+
 # Per-worker bounded MPMC queues behind the scheduler's common queue API
-struct MPMCReadyQueues(ReadyQueueBackend):
+struct MPMCReadyQueues(ReadyQueueBackend): # NO LONGER USED BY THE COOPERATIVE RUNTIME (LEGACY)
     var queues: Pointer[MPMCQueue[Int64], MutUntrackedOrigin]
     var num_workers: Int
 
@@ -116,7 +185,7 @@ struct MPMCReadyQueues(ReadyQueueBackend):
         return ReadyQueueResult.empty()
 
 # Per-worker Chase-Lev deques behind the scheduler's common queue API
-struct WorkStealingReadyQueues(ReadyQueueBackend):
+struct WorkStealingReadyQueues(ReadyQueueBackend): # NO LONGER USED BY THE COOPERATIVE RUNTIME (LEGACY)
     var queues: Pointer[WorkStealingDeque, MutUntrackedOrigin]
     var num_workers: Int
 

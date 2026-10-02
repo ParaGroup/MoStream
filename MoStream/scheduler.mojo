@@ -14,8 +14,9 @@
 # ===------------------------------------------------------------------------=== #
 
 from std.atomic import Atomic, Ordering
+from std.collections import Optional
 from MoStream.MPMC_queue import MPMCQueue
-from MoStream.ready_queue import ReadyQueueBackend, ReadyQueueResult
+from MoStream.ready_queue import StageReadyQueueBackend, ReadyQueueResult
 from MoStream.actor import ActorStatus
 from MoStream.pipeline import CoresList, pin_thread_to_cpu
 from MoStream.node import NodeTrait, SeqNode, ParallelNode
@@ -38,11 +39,11 @@ struct ActorDescriptor(ImplicitlyCopyable):
         self.flat_id = flat_id
 
 # Scheduler
-struct Scheduler[ReadyQueues: ReadyQueueBackend, *Ts: NodeTrait]:
+struct Scheduler[ReadyQueues: StageReadyQueueBackend, *Ts: NodeTrait]:
     var num_stages: Int # number of stages in the pipeline
     var total_actors: Int # total number of actors in the pipeline (sum of parallelism degrees of all stages)
     var num_workers: Int # number of workers used by the cooperative scheduler
-    var ready_queues: Self.ReadyQueues # one ready queue for each worker
+    var ready_queues: Self.ReadyQueues # one shared ready queue for each stage
     var actor_descriptors: Pointer[ActorDescriptor, MutUntrackedOrigin] # array of actor descriptors indexed by flat actor ID
     var wq_inputs: Pointer[MPMCQueue[ActorDescriptor], MutUntrackedOrigin] # array of wait queues for actors waiting on input
     var wq_outputs: Pointer[MPMCQueue[ActorDescriptor], MutUntrackedOrigin] # array of wait queues for actors waiting on output
@@ -98,18 +99,18 @@ struct Scheduler[ReadyQueues: ReadyQueueBackend, *Ts: NodeTrait]:
         self.actor_busy.unsafe_free()
 
     # make an actor ready to run
-    def schedule_actor(mut self, actor: ActorDescriptor, worker_id: Int):
-        if not self.ready_queues.push_local(worker_id, Int64(actor.flat_id)):
+    def schedule_actor(mut self, actor: ActorDescriptor):
+        if not self.ready_queues.push_stage(actor.stage_idx, Int64(actor.flat_id)):
             print_red_color("{MoStream} Error: cooperative ready queue is full!")
             exit(1)
 
     # make all actors ready to run (only used at the beginning of the execution)
     def enqueue_all_actors(mut self):
         for flat_id in range(self.total_actors):
-            self.schedule_actor(self.actor_descriptors.unsafe_offset(flat_id)[], flat_id % self.num_workers)
+            self.schedule_actor(self.actor_descriptors.unsafe_offset(flat_id)[])
 
     # start the scheduler in cooperative mode
-    def start(mut self, mut nodes: Tuple[*Self.Ts], mut coreslist: CoresList):
+    def start(mut self, mut nodes: Tuple[*Self.Ts], mut coreslist: CoresList) raises:
         self.enqueue_all_actors()
         var tg = TaskGroup()
         for worker_id in range(0, self.num_workers):
@@ -117,6 +118,15 @@ struct Scheduler[ReadyQueues: ReadyQueueBackend, *Ts: NodeTrait]:
             var task = self.worker_loop(nodes, worker_id, core_id)
             tg.create_task(task^)
         tg.wait()
+        self.destroy_communicators(nodes)
+
+    # Cooperative actors share communicator pointers. Release every edge only
+    # after workers can no longer read its occupancy while selecting a stage.
+    def destroy_communicators(mut self, mut nodes: Tuple[*Self.Ts]) raises:
+        comptime for stage_idx in range(1, len(Self.Ts)):
+            var communicator = nodes[stage_idx].actor_ref(0)[].in_comm
+            communicator.unsafe_deinit_pointee()
+            communicator.unsafe_free()
 
     # get the input wait queue index for an actor
     @always_inline
@@ -137,13 +147,13 @@ struct Scheduler[ReadyQueues: ReadyQueueBackend, *Ts: NodeTrait]:
             (expected, ActorStatus.RUNNING)
 
     # mark a running actor as ready to run
-    def mark_from_running_to_ready(mut self, actor: ActorDescriptor, worker_id: Int):
+    def mark_from_running_to_ready(mut self, actor: ActorDescriptor):
         var expected = ActorStatus.RUNNING
         if self.actor_states.unsafe_offset(actor.flat_id)[].compare_exchange[
             success_ordering=Ordering.RELEASE,
             failure_ordering=Ordering.RELAXED]
             (expected, ActorStatus.READY):
-            self.schedule_actor(actor, worker_id)
+            self.schedule_actor(actor)
 
     # mark a running actor as done
     def mark_from_running_to_done(mut self, actor: ActorDescriptor):
@@ -155,13 +165,13 @@ struct Scheduler[ReadyQueues: ReadyQueueBackend, *Ts: NodeTrait]:
             _ = self.done_count[].fetch_add[ordering=Ordering.ACQUIRE_RELEASE](1)
 
     # mark a blocked actor (BLOCKED_INPUT or BLOCKED_OUTPUT) as ready to run
-    def mark_from_blocked_to_ready(mut self, actor: ActorDescriptor, blocked_state: UInt64, worker_id: Int):
+    def mark_from_blocked_to_ready(mut self, actor: ActorDescriptor, blocked_state: UInt64):
         var expected = blocked_state
         if self.actor_states.unsafe_offset(actor.flat_id)[].compare_exchange[
             success_ordering=Ordering.RELEASE,
             failure_ordering=Ordering.RELAXED,
         ](expected, ActorStatus.READY):
-            self.schedule_actor(actor, worker_id)
+            self.schedule_actor(actor)
 
     # set an actor as busy (to protect parking logic)
     def set_busy(mut self, actor: ActorDescriptor) raises:
@@ -224,7 +234,7 @@ struct Scheduler[ReadyQueues: ReadyQueueBackend, *Ts: NodeTrait]:
         return True
 
     # try to wake an actor waiting on its input queue
-    def wake_one_input_waiter(mut self, comm_idx: Int, worker_id: Int):
+    def wake_one_input_waiter(mut self, comm_idx: Int):
         while True:
             var maybe_actor = self.wq_inputs.unsafe_offset(comm_idx)[].try_pop()
             if not maybe_actor:
@@ -235,11 +245,11 @@ struct Scheduler[ReadyQueues: ReadyQueueBackend, *Ts: NodeTrait]:
                 success_ordering=Ordering.ACQUIRE_RELEASE,
                 failure_ordering=Ordering.RELAXED]
                 (expected, ActorStatus.READY):
-                self.schedule_actor(actor, worker_id)
+                self.schedule_actor(actor)
                 return
 
     # try to wake all actors waiting on the same input queue
-    def wake_all_input_waiters(mut self, comm_idx: Int, worker_id: Int):
+    def wake_all_input_waiters(mut self, comm_idx: Int):
         while True:
             var maybe_actor = self.wq_inputs.unsafe_offset(comm_idx)[].try_pop()
             if not maybe_actor:
@@ -250,10 +260,10 @@ struct Scheduler[ReadyQueues: ReadyQueueBackend, *Ts: NodeTrait]:
                 success_ordering=Ordering.ACQUIRE_RELEASE,
                 failure_ordering=Ordering.RELAXED]
                 (expected, ActorStatus.READY):
-                self.schedule_actor(actor, worker_id)
+                self.schedule_actor(actor)
 
     # try to wake an actor waiting on its output queue
-    def wake_one_output_waiter(mut self, comm_idx: Int, worker_id: Int):
+    def wake_one_output_waiter(mut self, comm_idx: Int):
         while True:
             var maybe_actor = self.wq_outputs.unsafe_offset(comm_idx)[].try_pop()
             if not maybe_actor:
@@ -264,11 +274,11 @@ struct Scheduler[ReadyQueues: ReadyQueueBackend, *Ts: NodeTrait]:
                 success_ordering=Ordering.ACQUIRE_RELEASE,
                 failure_ordering=Ordering.RELAXED]
                 (expected, ActorStatus.READY):
-                self.schedule_actor(actor, worker_id)
+                self.schedule_actor(actor)
                 return
 
     # force waking some actors on the input queue to make room for new waiters
-    def try_make_room_input(mut self, comm_idx: Int, max_pops: Int, worker_id: Int):
+    def try_make_room_input(mut self, comm_idx: Int, max_pops: Int):
         for _ in range(max_pops):
             var maybe_actor = self.wq_inputs.unsafe_offset(comm_idx)[].try_pop()
             if not maybe_actor:
@@ -279,11 +289,11 @@ struct Scheduler[ReadyQueues: ReadyQueueBackend, *Ts: NodeTrait]:
                 success_ordering=Ordering.ACQUIRE_RELEASE,
                 failure_ordering=Ordering.RELAXED]
                 (expected, ActorStatus.READY):
-                self.schedule_actor(stale, worker_id)
+                self.schedule_actor(stale)
                 return
 
     # force waking some actors on the output queue to make room for new waiters
-    def try_make_room_output(mut self, comm_idx: Int, max_pops: Int, worker_id: Int):
+    def try_make_room_output(mut self, comm_idx: Int, max_pops: Int):
         for _ in range(max_pops):
             var maybe_actor = self.wq_outputs.unsafe_offset(comm_idx)[].try_pop()
             if not maybe_actor:
@@ -294,13 +304,13 @@ struct Scheduler[ReadyQueues: ReadyQueueBackend, *Ts: NodeTrait]:
                 success_ordering=Ordering.ACQUIRE_RELEASE,
                 failure_ordering=Ordering.RELAXED]
                 (expected, ActorStatus.READY):
-                self.schedule_actor(stale, worker_id)
+                self.schedule_actor(stale)
                 return
 
     # put the actor in the BLOCKING_INPUT state or mark it ready if already available
-    def park_on_input_or_ready(mut self, mut nodes: Tuple[*Self.Ts], actor: ActorDescriptor, worker_id: Int) raises:
+    def park_on_input_or_ready(mut self, mut nodes: Tuple[*Self.Ts], actor: ActorDescriptor) raises:
         if actor.stage_idx == 0:
-            self.mark_from_running_to_ready(actor, worker_id)
+            self.mark_from_running_to_ready(actor)
             return
         var comm_idx = self.input_wait_queue_idx(actor)
         self.set_busy(actor) # protect
@@ -313,23 +323,23 @@ struct Scheduler[ReadyQueues: ReadyQueueBackend, *Ts: NodeTrait]:
             return
         var not_queued = self.wq_inputs.unsafe_offset(comm_idx)[].try_push(actor)
         if not_queued:
-            self.try_make_room_input(comm_idx, 8, worker_id)
+            self.try_make_room_input(comm_idx, 8)
             not_queued = self.wq_inputs.unsafe_offset(comm_idx)[].try_push(actor)
         if not_queued:
-            self.mark_from_blocked_to_ready(actor, ActorStatus.BLOCKED_INPUT, worker_id)
+            self.mark_from_blocked_to_ready(actor, ActorStatus.BLOCKED_INPUT)
             self.set_not_busy(actor) # unprotect
             return
         if self.try_reserve_input_for_actor(nodes, actor):
-            self.wake_one_output_waiter(comm_idx, worker_id)
-            self.mark_from_blocked_to_ready(actor, ActorStatus.BLOCKED_INPUT, worker_id)
+            self.wake_one_output_waiter(comm_idx)
+            self.mark_from_blocked_to_ready(actor, ActorStatus.BLOCKED_INPUT)
             self.set_not_busy(actor) # unprotect
             return
         if self.actor_input_is_closed(nodes, actor):
-            self.mark_from_blocked_to_ready(actor, ActorStatus.BLOCKED_INPUT, worker_id)
+            self.mark_from_blocked_to_ready(actor, ActorStatus.BLOCKED_INPUT)
         self.set_not_busy(actor) # unprotect
 
     # put the actor in the BLOCKING_OUTPUT state or mark it ready if already available
-    def park_on_output_or_ready(mut self, mut nodes: Tuple[*Self.Ts], actor: ActorDescriptor, worker_id: Int) raises:
+    def park_on_output_or_ready(mut self, mut nodes: Tuple[*Self.Ts], actor: ActorDescriptor) raises:
         var comm_idx = self.output_wait_queue_idx(actor)
         self.set_busy(actor) # protect
         var expected = ActorStatus.RUNNING
@@ -341,75 +351,94 @@ struct Scheduler[ReadyQueues: ReadyQueueBackend, *Ts: NodeTrait]:
             return
         var not_queued = self.wq_outputs.unsafe_offset(comm_idx)[].try_push(actor)
         if not_queued:
-            self.try_make_room_output(comm_idx, 8, worker_id)
+            self.try_make_room_output(comm_idx, 8)
             not_queued = self.wq_outputs.unsafe_offset(comm_idx)[].try_push(actor)
         if not_queued:
-            self.mark_from_blocked_to_ready(actor, ActorStatus.BLOCKED_OUTPUT, worker_id)
+            self.mark_from_blocked_to_ready(actor, ActorStatus.BLOCKED_OUTPUT)
             self.set_not_busy(actor) # unprotect
             return
         if self.retry_push_pending_output_for_actor(nodes, actor):
-            self.wake_one_input_waiter(comm_idx, worker_id)
-            self.mark_from_blocked_to_ready(actor, ActorStatus.BLOCKED_OUTPUT, worker_id)
+            self.wake_one_input_waiter(comm_idx)
+            self.mark_from_blocked_to_ready(actor, ActorStatus.BLOCKED_OUTPUT)
         self.set_not_busy(actor) # unprotect
 
     # notification method after processing an actor returning READY
-    def notify_after_ready(mut self, mut nodes: Tuple[*Self.Ts], actor: ActorDescriptor, worker_id: Int) raises:
+    def notify_after_ready(mut self, mut nodes: Tuple[*Self.Ts], actor: ActorDescriptor) raises:
         # the actor might have consumed an input, capacity may have been freed upstream
         if actor.stage_idx > 0: # if it is not a source
-            self.wake_one_output_waiter(self.input_wait_queue_idx(actor), worker_id)
+            self.wake_one_output_waiter(self.input_wait_queue_idx(actor))
         # the actor might have produced output(s), data may be available downstream
         if actor.stage_idx < self.num_stages - 1: # if it is not a sink
-            self.wake_one_input_waiter(self.output_wait_queue_idx(actor), worker_id)
+            self.wake_one_input_waiter(self.output_wait_queue_idx(actor))
 
     # notification method after processing an actor returning BLOCKED_INPUT
-    def notify_after_blocked_input(mut self, mut nodes: Tuple[*Self.Ts], actor: ActorDescriptor, worker_id: Int) raises:
+    def notify_after_blocked_input(mut self, mut nodes: Tuple[*Self.Ts], actor: ActorDescriptor) raises:
         # the actor might have produced output(s), data may be available downstream
         if actor.stage_idx < self.num_stages - 1: # if it is not a sink
-            self.wake_one_input_waiter(self.output_wait_queue_idx(actor), worker_id)
+            self.wake_one_input_waiter(self.output_wait_queue_idx(actor))
 
     # notification method after processing an actor returning BLOCKED_OUTPUT
-    def notify_after_blocked_output(mut self, mut nodes: Tuple[*Self.Ts], actor: ActorDescriptor, worker_id: Int) raises:
+    def notify_after_blocked_output(mut self, mut nodes: Tuple[*Self.Ts], actor: ActorDescriptor) raises:
         # the actor might have consumed an input, capacity may have been freed upstream
         if actor.stage_idx > 0: # if it is not a source
-            self.wake_one_output_waiter(self.input_wait_queue_idx(actor), worker_id)
+            self.wake_one_output_waiter(self.input_wait_queue_idx(actor))
 
     # notification method after processing an actor returning DONE
-    def notify_after_done(mut self, mut nodes: Tuple[*Self.Ts], actor: ActorDescriptor, worker_id: Int) raises:
+    def notify_after_done(mut self, mut nodes: Tuple[*Self.Ts], actor: ActorDescriptor) raises:
         # a DONE transform/sink may have consumed input or observed EOS. Waking an
         # upstream producer is harmless and can release capacity waiters
         if actor.stage_idx > 0: # if it is not a source
-            self.wake_one_output_waiter(self.input_wait_queue_idx(actor), worker_id)
+            self.wake_one_output_waiter(self.input_wait_queue_idx(actor))
         # a DONE source/transform may have closed its output communicator. If it is
         # closed, all downstream input waiters must be woken so they can observe EOS
         if actor.stage_idx < self.num_stages - 1: # if it is not a sink
             if self.actor_output_is_closed(nodes, actor):
-                self.wake_all_input_waiters(self.output_wait_queue_idx(actor), worker_id)
+                self.wake_all_input_waiters(self.output_wait_queue_idx(actor))
             else:
-                self.wake_one_input_waiter(self.output_wait_queue_idx(actor), worker_id)
+                self.wake_one_input_waiter(self.output_wait_queue_idx(actor))
 
-    # pop local work first, then steal from other workers in rotating order
-    def try_get_actor(mut self, worker_id: Int, first_victim: Int) -> Optional[ActorDescriptor]:
-        var result = self.ready_queues.pop_local(worker_id)
-        if result.status == ReadyQueueResult.SUCCESS:
-            return Optional(self.actor_descriptors.unsafe_offset(Int(result.actor_id))[])
-        for offset in range(self.num_workers):
-            var victim = (first_victim + offset) % self.num_workers
-            if victim == worker_id:
-                continue
-            result = self.ready_queues.steal_from(victim)
+    # Compute input_fill * output_free for a stage. Sources have an implicit
+    # full input and sinks have an implicit empty output
+    def stage_priority(mut self, mut nodes: Tuple[*Self.Ts], stage_idx: Int) raises -> Float64:
+        var input_fill = 1.0
+        var output_free = 1.0
+        comptime for i in range(len(Self.Ts)):
+            if stage_idx == i:
+                comptime if i > 0:
+                    input_fill = nodes[i].actor_ref(0)[].in_comm[].fill_ratio()
+                comptime if i < len(Self.Ts) - 1:
+                    output_free = 1.0 - nodes[i].actor_ref(0)[].out_comm[].fill_ratio()
+        return input_fill * output_free
+
+    # Select the highest-priority eligible stage. If another worker consumes
+    # its last ready actor first, recompute priorities from a fresh snapshot
+    def try_get_actor(mut self, mut nodes: Tuple[*Self.Ts], first_stage: Int) raises -> Optional[ActorDescriptor]:
+        while True:
+            var selected_stage = -1
+            var best_priority = -1.0
+            for offset in range(self.num_stages):
+                var stage_idx = (first_stage + offset) % self.num_stages
+                if self.ready_queues.ready_count(stage_idx) <= 0:
+                    continue
+                var priority = self.stage_priority(nodes, stage_idx)
+                if selected_stage < 0 or priority > best_priority:
+                    selected_stage = stage_idx
+                    best_priority = priority
+            if selected_stage < 0:
+                return None
+            var result = self.ready_queues.pop_stage(selected_stage)
             if result.status == ReadyQueueResult.SUCCESS:
                 return Optional(self.actor_descriptors.unsafe_offset(Int(result.actor_id))[])
-        return None
 
     # main worker loop
     async def worker_loop(mut self, mut nodes: Tuple[*Self.Ts], worker_id: Int, core_id: Int):
         try:
             # pinning of the underlying thread if pinning is enabled
             _ = pin_thread_to_cpu(core_id)
-            var first_victim = (worker_id + 1) % self.num_workers
+            var first_stage = worker_id % self.num_stages
             while self.done_count[].load[ordering=Ordering.ACQUIRE]() < UInt64(self.total_actors):
-                var maybe_actor = self.try_get_actor(worker_id, first_victim)
-                first_victim = (first_victim + 1) % self.num_workers
+                var maybe_actor = self.try_get_actor(nodes, first_stage)
+                first_stage = (first_stage + 1) % self.num_stages
                 if not maybe_actor:
                     continue
                 var actor = maybe_actor.take()
@@ -420,19 +449,19 @@ struct Scheduler[ReadyQueues: ReadyQueueBackend, *Ts: NodeTrait]:
                 for i in range(max_rounds):
                     var result = self.process_actor(nodes, actor)
                     if result == ActorStatus.READY:
-                        self.notify_after_ready(nodes, actor, worker_id)
+                        self.notify_after_ready(nodes, actor)
                         if (i == max_rounds - 1):
-                            self.mark_from_running_to_ready(actor, worker_id)
+                            self.mark_from_running_to_ready(actor)
                     elif result == ActorStatus.BLOCKED_INPUT:
-                        self.notify_after_blocked_input(nodes, actor, worker_id)
-                        self.park_on_input_or_ready(nodes, actor, worker_id)
+                        self.notify_after_blocked_input(nodes, actor)
+                        self.park_on_input_or_ready(nodes, actor)
                         break
                     elif result == ActorStatus.BLOCKED_OUTPUT:
-                        self.notify_after_blocked_output(nodes, actor, worker_id)
-                        self.park_on_output_or_ready(nodes, actor, worker_id)
+                        self.notify_after_blocked_output(nodes, actor)
+                        self.park_on_output_or_ready(nodes, actor)
                         break
                     elif result == ActorStatus.DONE:
-                        self.notify_after_done(nodes, actor, worker_id)
+                        self.notify_after_done(nodes, actor)
                         self.mark_from_running_to_done(actor)
                         break
                     else:
@@ -441,4 +470,3 @@ struct Scheduler[ReadyQueues: ReadyQueueBackend, *Ts: NodeTrait]:
         except e:
             print("Raised: " + String(e))
             exit(1)
-
