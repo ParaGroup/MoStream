@@ -20,7 +20,7 @@ from MoStream.emitter import Emitter
 from MoStream.standard_runtime import executor_task
 from MoStream.stage import StageKind
 from MoStream.scheduler import Scheduler
-from MoStream.ready_queue import ReadyQueueKind, StageWorkStealingReadyQueues, ready_queue_capacity
+from MoStream.ready_queue import ReadyQueueKind, SharededStageWorkStealingReadyQueues, ready_queue_capacity
 from MoStream.actor import Actor
 from MoStream.utils import print_cyan_color, print_red_color, print_yellow_color
 from std.os import getenv
@@ -203,9 +203,7 @@ struct Pipeline[*Ts: NodeTrait]:
         print_cyan_color("{MoStream} CPU pinning is " + pinning)
         print_cyan_color("{MoStream} Pipeline starts...")
         var ready_queue_size = ready_queue_capacity(self.getMaxStageParallelism())
-        var ready_queues = StageWorkStealingReadyQueues(
-            n_workers, Self.N, ready_queue_size
-        )
+        var ready_queues = SharededStageWorkStealingReadyQueues(n_workers, Self.N, ready_queue_size)
         var scheduler = Scheduler(self.nodes, n_workers, ready_queues^)
         scheduler.start(self.nodes, self.coreslist)
         print_cyan_color("{MoStream} ...terminated successfully!")    

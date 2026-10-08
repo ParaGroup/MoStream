@@ -100,19 +100,14 @@ struct Scheduler[ReadyQueues: ShardedStageReadyQueueBackend, *Ts: NodeTrait]:
 
     # make an actor ready to run
     def schedule_actor(mut self, actor: ActorDescriptor, worker_id: Int):
-        if not self.ready_queues.push_local(
-            worker_id, actor.stage_idx, Int64(actor.flat_id)
-        ):
+        if not self.ready_queues.push_local(worker_id, actor.stage_idx, Int64(actor.flat_id)):
             print_red_color("{MoStream} Error: cooperative ready queue is full!")
             exit(1)
 
     # make all actors ready to run (only used at the beginning of the execution)
     def enqueue_all_actors(mut self):
         for flat_id in range(self.total_actors):
-            self.schedule_actor(
-                self.actor_descriptors.unsafe_offset(flat_id)[],
-                flat_id % self.num_workers,
-            )
+            self.schedule_actor(self.actor_descriptors.unsafe_offset(flat_id)[], flat_id % self.num_workers)
 
     # start the scheduler in cooperative mode
     def start(mut self, mut nodes: Tuple[*Self.Ts], mut coreslist: CoresList) raises:
@@ -174,8 +169,8 @@ struct Scheduler[ReadyQueues: ShardedStageReadyQueueBackend, *Ts: NodeTrait]:
         var expected = blocked_state
         if self.actor_states.unsafe_offset(actor.flat_id)[].compare_exchange[
             success_ordering=Ordering.RELEASE,
-            failure_ordering=Ordering.RELAXED,
-        ](expected, ActorStatus.READY):
+            failure_ordering=Ordering.RELAXED]
+            (expected, ActorStatus.READY):
             self.schedule_actor(actor, worker_id)
 
     # set an actor as busy (to protect parking logic)
@@ -403,7 +398,7 @@ struct Scheduler[ReadyQueues: ShardedStageReadyQueueBackend, *Ts: NodeTrait]:
                 self.wake_one_input_waiter(self.output_wait_queue_idx(actor), worker_id)
 
     # Compute input_fill * output_free for a stage. Sources have an implicit
-    # full input and sinks have an implicit empty output.
+    # full input and sinks have an implicit empty output
     @always_inline
     def stage_priority[stage_idx: Int](mut self, mut nodes: Tuple[*Self.Ts]) raises -> Float64:
         var input_fill = 1.0
@@ -414,7 +409,7 @@ struct Scheduler[ReadyQueues: ShardedStageReadyQueueBackend, *Ts: NodeTrait]:
             output_free = 1.0 - nodes[stage_idx].actor_ref(0)[].out_comm[].fill_ratio()
         return input_fill * output_free
 
-    # Select the highest-priority stage that has work in this worker's shard.
+    # Select the highest-priority stage that has work in this worker's shard
     def select_local_stage(mut self, mut nodes: Tuple[*Self.Ts], worker_id: Int, first_stage: Int) raises -> Int:
         var selected_stage = -1
         var best_priority = -1.0
@@ -423,18 +418,13 @@ struct Scheduler[ReadyQueues: ShardedStageReadyQueueBackend, *Ts: NodeTrait]:
             if self.ready_queues.local_size(worker_id, stage_idx) > 0:
                 var priority = self.stage_priority[stage_idx](nodes)
                 var rank = (stage_idx - first_stage + self.num_stages) % self.num_stages
-                if (
-                    selected_stage < 0
-                    or priority > best_priority
-                    or (priority == best_priority and rank < best_rank)
-                ):
+                if (selected_stage < 0 or priority > best_priority or (priority == best_priority and rank < best_rank)):
                     selected_stage = stage_idx
                     best_priority = priority
                     best_rank = rank
         return selected_stage
 
-    # Select the highest-priority stage that appears to have work on another
-    # worker. Queue-size observations are hints and may be stale.
+    # Select the highest-priority stage that appears to have work on another worker. Queue-size observations are hints and may be stale
     def select_remote_stage(mut self, mut nodes: Tuple[*Self.Ts], worker_id: Int, first_stage: Int, first_victim: Int) raises -> Int:
         var selected_stage = -1
         var best_priority = -1.0
@@ -451,11 +441,7 @@ struct Scheduler[ReadyQueues: ShardedStageReadyQueueBackend, *Ts: NodeTrait]:
             if has_remote_work:
                 var priority = self.stage_priority[stage_idx](nodes)
                 var rank = (stage_idx - first_stage + self.num_stages) % self.num_stages
-                if (
-                    selected_stage < 0
-                    or priority > best_priority
-                    or (priority == best_priority and rank < best_rank)
-                ):
+                if (selected_stage < 0 or priority > best_priority or (priority == best_priority and rank < best_rank)):
                     selected_stage = stage_idx
                     best_priority = priority
                     best_rank = rank
@@ -464,9 +450,7 @@ struct Scheduler[ReadyQueues: ShardedStageReadyQueueBackend, *Ts: NodeTrait]:
     # Consume the highest-priority locally available actor.
     def try_pop_local_actor(mut self, mut nodes: Tuple[*Self.Ts], worker_id: Int, first_stage: Int) raises -> Optional[ActorDescriptor]:
         while True:
-            var selected_stage = self.select_local_stage(
-                nodes, worker_id, first_stage
-            )
+            var selected_stage = self.select_local_stage(nodes, worker_id, first_stage)
             if selected_stage < 0:
                 return None
             var result = self.ready_queues.pop_local(worker_id, selected_stage)
@@ -476,34 +460,23 @@ struct Scheduler[ReadyQueues: ShardedStageReadyQueueBackend, *Ts: NodeTrait]:
     # Steal from the highest-priority stage that has work on another worker.
     def try_steal_actor(mut self, mut nodes: Tuple[*Self.Ts], worker_id: Int, first_stage: Int, first_victim: Int) raises -> Optional[ActorDescriptor]:
         while True:
-            var selected_stage = self.select_remote_stage(
-                nodes, worker_id, first_stage, first_victim
-            )
+            var selected_stage = self.select_remote_stage(nodes, worker_id, first_stage, first_victim)
             if selected_stage < 0:
                 return None
             for offset in range(self.num_workers):
                 var victim_id = (first_victim + offset) % self.num_workers
                 if victim_id == worker_id:
                     continue
-                var result = self.ready_queues.steal_from(
-                    victim_id, selected_stage
-                )
+                var result = self.ready_queues.steal_from(victim_id, selected_stage)
                 if result.status == ReadyQueueResult.SUCCESS:
-                    return Optional(
-                        self.actor_descriptors.unsafe_offset(Int(result.actor_id))[]
-                    )
+                    return Optional(self.actor_descriptors.unsafe_offset(Int(result.actor_id))[])
 
-    # Prefer pressure-ranked local work, then steal from a pressure-ranked
-    # remote stage only when the worker has no local actor.
+    # Prefer pressure-ranked local work, then steal from a pressure-ranked remote stage only when the worker has no local actor
     def try_get_actor(mut self, mut nodes: Tuple[*Self.Ts], worker_id: Int, first_stage: Int, first_victim: Int) raises -> Optional[ActorDescriptor]:
-        var local_actor = self.try_pop_local_actor(
-            nodes, worker_id, first_stage
-        )
+        var local_actor = self.try_pop_local_actor(nodes, worker_id, first_stage)
         if local_actor:
             return Optional(local_actor.take())
-        return self.try_steal_actor(
-            nodes, worker_id, first_stage, first_victim
-        )
+        return self.try_steal_actor(nodes, worker_id, first_stage, first_victim)
 
     # main worker loop
     async def worker_loop(mut self, mut nodes: Tuple[*Self.Ts], worker_id: Int, core_id: Int):
@@ -513,9 +486,7 @@ struct Scheduler[ReadyQueues: ShardedStageReadyQueueBackend, *Ts: NodeTrait]:
             var first_stage = worker_id % self.num_stages
             var first_victim = (worker_id + 1) % self.num_workers
             while self.done_count[].load[ordering=Ordering.ACQUIRE]() < UInt64(self.total_actors):
-                var maybe_actor = self.try_get_actor(
-                    nodes, worker_id, first_stage, first_victim
-                )
+                var maybe_actor = self.try_get_actor(nodes, worker_id, first_stage, first_victim)
                 first_stage = (first_stage + 1) % self.num_stages
                 first_victim = (first_victim + 1) % self.num_workers
                 if not maybe_actor:
