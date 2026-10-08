@@ -73,7 +73,7 @@ def run_config(src_degree: Int,
 def main():
     var args = argv()
     if len(args) < 7 or len(args) > 8:
-        print("Usage: ./test_image_coop <Source> <GrayScale> <GaussianBlur> <Sharpen> <Sink> <n_workers> [mpmc]")
+        print("Usage: ./test_image_coop <Source> <GrayScale> <GaussianBlur> <Sharpen> <Sink> <n_workers> [work-stealing]")
         return
     try:
         var src_degree = Int(args[1])
@@ -82,9 +82,9 @@ def main():
         var sharp_degree = Int(args[4])
         var sink_degree = Int(args[5])
         var n_workers = Int(args[6])
-        var ready_queue_kind = ReadyQueueKind.MPMC
+        var ready_queue_kind = ReadyQueueKind.WORK_STEALING
         if len(args) == 8:
-            if args[7] != "mpmc":
+            if args[7] != "work-stealing":
                 print("Invalid ready queue kind: ", args[7])
                 return
         print("  Image processing pipeline in Mojo: Source -> GrayScale -> GaussianBlur -> Sharpen -> Sink")

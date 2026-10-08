@@ -17,6 +17,7 @@ from MoStream.ready_queue import (
     MPMCReadyQueues,
     ReadyQueueResult,
     StageMPMCReadyQueues,
+    StageWorkStealingReadyQueues,
     WorkStealingReadyQueues,
     ready_queue_capacity,
 )
@@ -72,6 +73,28 @@ def test_stage_mpmc_backend_tracks_eligible_stages() raises:
     assert_equal(second.status, ReadyQueueResult.SUCCESS)
     assert_equal(second.actor_id, Int64(30))
     assert_equal(queues.ready_count(1), Int64(0))
+
+# Tests for the worker-sharded, stage-based work-stealing backend
+def test_stage_work_stealing_backend_preserves_shards_and_deque_ends() raises:
+    var queues = StageWorkStealingReadyQueues(2, 3, 8)
+    assert_true(queues.push_local(0, 1, 10))
+    assert_true(queues.push_local(0, 1, 20))
+    assert_true(queues.push_local(1, 2, 30))
+    assert_equal(queues.local_size(0, 1), 2)
+    assert_equal(queues.local_size(0, 2), 0)
+    assert_equal(queues.local_size(1, 2), 1)
+
+    var local = queues.pop_local(0, 1)
+    assert_equal(local.status, ReadyQueueResult.SUCCESS)
+    assert_equal(local.actor_id, Int64(20))
+
+    var stolen = queues.steal_from(0, 1)
+    assert_equal(stolen.status, ReadyQueueResult.SUCCESS)
+    assert_equal(stolen.actor_id, Int64(10))
+
+    var other_stage = queues.pop_local(1, 2)
+    assert_equal(other_stage.status, ReadyQueueResult.SUCCESS)
+    assert_equal(other_stage.actor_id, Int64(30))
 
 # Main
 def main() raises:

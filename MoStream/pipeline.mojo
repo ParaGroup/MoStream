@@ -20,7 +20,7 @@ from MoStream.emitter import Emitter
 from MoStream.standard_runtime import executor_task
 from MoStream.stage import StageKind
 from MoStream.scheduler import Scheduler
-from MoStream.ready_queue import ReadyQueueKind, StageMPMCReadyQueues, ready_queue_capacity
+from MoStream.ready_queue import ReadyQueueKind, StageWorkStealingReadyQueues, ready_queue_capacity
 from MoStream.actor import Actor
 from MoStream.utils import print_cyan_color, print_red_color, print_yellow_color
 from std.os import getenv
@@ -173,7 +173,7 @@ struct Pipeline[*Ts: NodeTrait]:
     # run_cooperative
     def run_cooperative(mut self,
                         n_workers: Int,
-                        ready_queue_kind: Int = ReadyQueueKind.MPMC) raises:
+                        ready_queue_kind: Int = ReadyQueueKind.WORK_STEALING) raises:
         if (self.alreadyRun):
             print_red_color("{MoStream} Error: run() or run_cooperative() method can be called only once for each pipeline instance!")
             raise Error("error in run()")
@@ -184,8 +184,8 @@ struct Pipeline[*Ts: NodeTrait]:
         if (n_workers <= 0):
             print_red_color("{MoStream} Error: the number of workers of the cooperative scheduler must be greater than zero!")
             raise Error("error in run_cooperative()")
-        if ready_queue_kind != ReadyQueueKind.MPMC:
-            print_red_color("{MoStream} Error: the stage-oriented cooperative scheduler requires MPMC ready queues!")
+        if ready_queue_kind != ReadyQueueKind.WORK_STEALING:
+            print_red_color("{MoStream} Error: the sharded stage scheduler requires work-stealing ready queues!")
             raise Error("error in run_cooperative()")
         var pinning = "disabled"
         if self.coreslist.enabled:
@@ -198,12 +198,14 @@ struct Pipeline[*Ts: NodeTrait]:
         self._run_cooperative_from[1, Self.N](out_comm)
         print_cyan_color("{MoStream} Starting pipeline execution with " + String(Self.N) + " stages and total parallelism of " + String(self.getNumNodes()) + " nodes")
         print_cyan_color("{MoStream} Cooperative MoStream runtime is used with " + String(n_workers) + " threads")
-        print_cyan_color("{MoStream} Shared per-stage MPMC ready queues are used")
-        print_cyan_color("{MoStream} Ready stages are prioritized by input fill and output free space")
+        print_cyan_color("{MoStream} Per-worker, per-stage work-stealing ready deques are used")
+        print_cyan_color("{MoStream} Local and stolen stages are prioritized by input fill and output free space")
         print_cyan_color("{MoStream} CPU pinning is " + pinning)
         print_cyan_color("{MoStream} Pipeline starts...")
-        var ready_queue_size = ready_queue_capacity(self.getNumNodes())
-        var ready_queues = StageMPMCReadyQueues(Self.N, ready_queue_size)
+        var ready_queue_size = ready_queue_capacity(self.getMaxStageParallelism())
+        var ready_queues = StageWorkStealingReadyQueues(
+            n_workers, Self.N, ready_queue_size
+        )
         var scheduler = Scheduler(self.nodes, n_workers, ready_queues^)
         scheduler.start(self.nodes, self.coreslist)
         print_cyan_color("{MoStream} ...terminated successfully!")    
@@ -222,3 +224,11 @@ struct Pipeline[*Ts: NodeTrait]:
         comptime for i in range(0, Self.N):
             total_nodes += self.nodes[i].parallelism()
         return total_nodes
+
+    # get the largest number of actors belonging to one stage
+    def getMaxStageParallelism(self) -> Int:
+        var max_parallelism = 0
+        comptime for i in range(0, Self.N):
+            if self.nodes[i].parallelism() > max_parallelism:
+                max_parallelism = self.nodes[i].parallelism()
+        return max_parallelism

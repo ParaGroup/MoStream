@@ -104,7 +104,7 @@ struct FourthStage(StageTrait):
 def main():
     var args = argv()
     if len(args) < 2 or len(args) > 3:
-        print("Usage: ./test_pipe_3_coop <n_workers> [mpmc]")
+        print("Usage: ./test_pipe_3_coop <n_workers> [work-stealing]")
         print(
             "  n_workers = number of workers used by the cooperative scheduler"
         )
@@ -117,9 +117,9 @@ def main():
     # creating the pipeline and running it
     try:
         var n_workers = Int(args[1])
-        var ready_queue_kind = ReadyQueueKind.MPMC
+        var ready_queue_kind = ReadyQueueKind.WORK_STEALING
         if len(args) == 3:
-            if args[2] != "mpmc":
+            if args[2] != "work-stealing":
                 print("Invalid ready queue kind: ", args[2])
                 return
         var pipeline = Pipeline(
