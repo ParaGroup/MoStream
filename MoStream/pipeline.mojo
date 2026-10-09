@@ -13,7 +13,7 @@
 #  Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
 # ===------------------------------------------------------------------------=== #
 
-from std.runtime.asyncrt import create_task, TaskGroup, parallelism_level
+from std.runtime._asyncrt import TaskGroup
 from MoStream.communicator import MessageTrait, Communicator
 from MoStream.node import NodeTrait, seq, parallel
 from MoStream.emitter import Emitter
@@ -135,7 +135,8 @@ struct Pipeline[*Ts: NodeTrait]:
             print_red_color("{MoStream} Error: run() or run_cooperative() method can be called only once for each pipeline instance!")
             raise Error("error in run()")
         self.alreadyRun = True
-        if (self.getNumNodes() > parallelism_level()):
+        var mp = Python.import_module("multiprocessing")
+        if (self.getNumNodes() > Int(py=mp.cpu_count())):
             print_red_color("{MoStream} Error: the number of nodes in the pipeline is greater than the number threads available in the thread pool!")
             raise Error("error in run()")
         var pinning = "disabled"
@@ -175,7 +176,8 @@ struct Pipeline[*Ts: NodeTrait]:
             print_red_color("{MoStream} Error: run() or run_cooperative() method can be called only once for each pipeline instance!")
             raise Error("error in run()")
         self.alreadyRun = True
-        if (n_workers > parallelism_level()):
+        var mp = Python.import_module("multiprocessing")
+        if (n_workers > Int(py=mp.cpu_count())):
             print_red_color("{MoStream} Error: the number of workers of the cooperative scheduler is greater than the number threads available in the thread pool!")
             raise Error("error in run_cooperative()")
         var pinning = "disabled"

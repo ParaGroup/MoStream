@@ -19,7 +19,7 @@ from MoStream.actor import ActorStatus
 from MoStream.pipeline import CoresList, pin_thread_to_cpu
 from MoStream.node import NodeTrait, SeqNode, ParallelNode
 from MoStream.utils import print_cyan_color, print_red_color, print_yellow_color
-from std.runtime.asyncrt import create_task, TaskGroup, parallelism_level
+from std.runtime._asyncrt import TaskGroup
 from std.sys.terminate import exit
 from std.memory.alloc import unsafe_alloc
 from std.memory import Pointer
@@ -43,9 +43,9 @@ struct Scheduler[*Ts: NodeTrait]:
     var ready_queue: Pointer[MPMCQueue[ActorDescriptor], MutUntrackedOrigin] # ready queue for actors that are ready to run
     var wq_inputs: Pointer[MPMCQueue[ActorDescriptor], MutUntrackedOrigin] # array of wait queues for actors waiting on input
     var wq_outputs: Pointer[MPMCQueue[ActorDescriptor], MutUntrackedOrigin] # array of wait queues for actors waiting on output
-    var actor_states: Pointer[Atomic[DType.uint64], MutUntrackedOrigin] # array of atomic variables representing the state of each actor
-    var done_count: Pointer[Atomic[DType.uint64], MutUntrackedOrigin] # counter of actors that have finished execution
-    var actor_busy: Pointer[Atomic[DType.uint64], MutUntrackedOrigin] # array of atomic flags to protect parking logic
+    var actor_states: Pointer[Atomic[UInt64], MutUntrackedOrigin] # array of atomic variables representing the state of each actor
+    var done_count: Pointer[Atomic[UInt64], MutUntrackedOrigin] # counter of actors that have finished execution
+    var actor_busy: Pointer[Atomic[UInt64], MutUntrackedOrigin] # array of atomic flags to protect parking logic
 
     # constructor
     def __init__(out self, mut nodes: Tuple[*Self.Ts]) raises:
@@ -60,14 +60,14 @@ struct Scheduler[*Ts: NodeTrait]:
         for i in range(self.num_stages):
             self.wq_inputs.unsafe_offset(i).unsafe_write(MPMCQueue[ActorDescriptor](1048576))
             self.wq_outputs.unsafe_offset(i).unsafe_write(MPMCQueue[ActorDescriptor](1048576))
-        self.actor_states = unsafe_alloc[Atomic[DType.uint64]](self.total_actors)
+        self.actor_states = unsafe_alloc[Atomic[UInt64]](self.total_actors)
         for i in range(self.total_actors):
-            self.actor_states.unsafe_offset(i)[] = Atomic[DType.uint64](ActorStatus.READY)
-        self.done_count = unsafe_alloc[Atomic[DType.uint64]](1)
-        self.done_count[] = Atomic[DType.uint64](0)
-        self.actor_busy = unsafe_alloc[Atomic[DType.uint64]](self.total_actors)
+            self.actor_states.unsafe_offset(i)[] = Atomic[UInt64](ActorStatus.READY)
+        self.done_count = unsafe_alloc[Atomic[UInt64]](1)
+        self.done_count[] = Atomic[UInt64](0)
+        self.actor_busy = unsafe_alloc[Atomic[UInt64]](self.total_actors)
         for i in range(self.total_actors):
-            self.actor_busy.unsafe_offset(i)[] = Atomic[DType.uint64](0)
+            self.actor_busy.unsafe_offset(i)[] = Atomic[UInt64](0)
 
     # destructor
     def __deinit__(deinit self):

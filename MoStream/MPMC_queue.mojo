@@ -24,29 +24,29 @@ from MoStream.utils import print_red_color
 # Struct to add padding to an atomic variable to avoid false sharing between producer and consumer
 struct PaddedAtomicU64:
     comptime CACHE_LINE_SIZE_BYTES = 64
-    comptime PAD_BYTES = Self.CACHE_LINE_SIZE_BYTES - size_of[Atomic[DType.uint64]]()
-    var atomicVal: Atomic[DType.uint64]
+    comptime PAD_BYTES = Self.CACHE_LINE_SIZE_BYTES - size_of[Atomic[UInt64]]()
+    var atomicVal: Atomic[UInt64]
     var pad: Array[UInt8, Self.PAD_BYTES]
 
     # constructor
     def __init__(out self, initial: UInt64):
-        self.atomicVal = Atomic[DType.uint64](initial)
+        self.atomicVal = Atomic[UInt64](initial)
         self.pad = Array[UInt8, Self.PAD_BYTES](uninitialized=True)
 
 # Cell struct used in the MPMC queue, containing a sequence number and the actual data (one slot of the queue)
 struct Cell[T: Copyable & Deinitable](Movable):
-    var sequence: Atomic[DType.uint64]
+    var sequence: Atomic[UInt64]
     var data: Optional[Self.T]
 
     # constructor
     def __init__(out self, seq: UInt64):
-        self.sequence = Atomic[DType.uint64](seq)
+        self.sequence = Atomic[UInt64](seq)
         self.data = Optional[Self.T](None)
 
     # move constructor
     def __init__(out self, *, deinit move: Self):
         var val = move.sequence.load()
-        self.sequence = Atomic[DType.uint64](val)
+        self.sequence = Atomic[UInt64](val)
         self.data = move.data^
 
 # MPMC queue implementation based the algorithm by Dmitry Vyukov
@@ -100,7 +100,7 @@ struct MPMCQueue[T: Copyable & Deinitable](Movable):
             if pw == seq:
                 if self.enqueue_pos.atomicVal.compare_exchange[failure_ordering=Ordering.RELAXED, success_ordering=Ordering.RELAXED](pw, pw + 1):
                     cell_ptr[].data = Optional(item^)
-                    Atomic[DType.uint64].store[ordering=Ordering.RELEASE](Pointer(to=cell_ptr[].sequence.value), pw + 1)
+                    cell_ptr[].sequence.store[ordering=Ordering.RELEASE](pw + 1)
                     return  # successfully pushed
                 for _ in range(bk):
                     #fence[ordering=Ordering.SEQUENTIAL]() # I am not sure of this, I suppose however that this for loop is compiled out
@@ -119,7 +119,7 @@ struct MPMCQueue[T: Copyable & Deinitable](Movable):
         if not self.enqueue_pos.atomicVal.compare_exchange[failure_ordering=Ordering.RELAXED, success_ordering=Ordering.RELAXED](pw, pw + 1):
             return Optional(item^) # queue is currently full
         cell_ptr[].data = Optional(item^)
-        Atomic[DType.uint64].store[ordering=Ordering.RELEASE](Pointer(to=cell_ptr[].sequence.value), pw + 1)
+        cell_ptr[].sequence.store[ordering=Ordering.RELEASE](pw + 1)
         return None # successfully pushed
 
     # pop method for consumers, returns the popped item
@@ -144,7 +144,7 @@ struct MPMCQueue[T: Copyable & Deinitable](Movable):
                 # element is ready to be consumed, try to claim it by incrementing pr
                 if self.dequeue_pos.atomicVal.compare_exchange[failure_ordering=Ordering.RELAXED, success_ordering=Ordering.RELAXED](pr, pr + 1):
                     var item = cell_ptr[].data.take()
-                    Atomic[DType.uint64].store[ordering=Ordering.RELEASE](Pointer(to=cell_ptr[].sequence.value), pr + self.mask + 1)
+                    cell_ptr[].sequence.store[ordering=Ordering.RELEASE](pr + self.mask + 1)
                     return Optional(item^)
                 # CAS failed, another consumer might have claimed this item, retry
                 for _ in range(bk):
