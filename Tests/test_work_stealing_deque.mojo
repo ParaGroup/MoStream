@@ -21,7 +21,7 @@ from MoStream.work_stealing_deque import (
 from std.atomic import Atomic, Ordering
 from std.memory import Pointer
 from std.memory.alloc import unsafe_alloc
-from std.runtime.asyncrt import TaskGroup
+from std.runtime._asyncrt import TaskGroup
 from std.sys.info import size_of
 from std.testing import assert_equal, assert_false, assert_true, TestSuite
 
@@ -29,8 +29,8 @@ from std.testing import assert_equal, assert_false, assert_true, TestSuite
 # record that an actor has seen and claimed a work item
 def record_actor(
     actor_id: Int64,
-    seen: Pointer[Atomic[DType.int64], MutUntrackedOrigin],
-    claimed: Pointer[Atomic[DType.int64], MutUntrackedOrigin],
+    seen: Pointer[Atomic[Int64], MutUntrackedOrigin],
+    claimed: Pointer[Atomic[Int64], MutUntrackedOrigin],
 ):
     _ = seen.unsafe_offset(Int(actor_id))[].fetch_add[
         ordering=Ordering.RELAXED
@@ -41,8 +41,8 @@ def record_actor(
 # steal work items from the deque until it is empty
 async def steal_until_empty(
     mut deque: WorkStealingDeque,
-    seen: Pointer[Atomic[DType.int64], MutUntrackedOrigin],
-    claimed: Pointer[Atomic[DType.int64], MutUntrackedOrigin],
+    seen: Pointer[Atomic[Int64], MutUntrackedOrigin],
+    claimed: Pointer[Atomic[Int64], MutUntrackedOrigin],
 ):
     while True:
         var result = deque.steal_top()
@@ -117,11 +117,11 @@ def test_owner_and_multiple_thieves_claim_each_actor_once() raises:
     comptime ACTOR_COUNT = 1024
     comptime THIEF_COUNT = 4
     var deque = WorkStealingDeque(2048)
-    var seen = unsafe_alloc[Atomic[DType.int64]](ACTOR_COUNT)
-    var claimed = unsafe_alloc[Atomic[DType.int64]](1)
-    claimed[] = Atomic[DType.int64](0)
+    var seen = unsafe_alloc[Atomic[Int64]](ACTOR_COUNT)
+    var claimed = unsafe_alloc[Atomic[Int64]](1)
+    claimed[] = Atomic[Int64](0)
     for actor_id in range(ACTOR_COUNT):
-        seen.unsafe_offset(actor_id)[] = Atomic[DType.int64](0)
+        seen.unsafe_offset(actor_id)[] = Atomic[Int64](0)
         assert_true(deque.push_bottom(Int64(actor_id)))
     var task_group = TaskGroup()
     for _ in range(THIEF_COUNT):

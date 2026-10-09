@@ -28,8 +28,8 @@ from std.sys import argv
 from std.memory.alloc import unsafe_alloc
 from std.memory import Pointer
 
-comptime W: Int = 32
-comptime H: Int = 32
+comptime W: Int = 512
+comptime H: Int = 512
 comptime DURATION: Int = 60
 comptime BASELINE_N: Int = 5000
 
@@ -48,17 +48,18 @@ def run_config(src_degree: Int,
                alternate_degree_2: Int,
                sink_degree: Int,
                n_workers: Int,
-               ready_queue_kind: Int) raises -> Tuple[Int, Float64]:
+               ready_queue_kind: Int,
+               max_consume_rounds: Int) raises -> Tuple[Int, Float64]:
     var source = TimedImageSource[W, H, DURATION]()
     var alt1 = AlternatingFilterStage[DURATION](True)
     var alt2 = AlternatingFilterStage[DURATION](False)
-    var count_ptr = unsafe_alloc[Atomic[DType.int64]](1)
-    count_ptr[] = Atomic[DType.int64](Int64(0))
+    var count_ptr = unsafe_alloc[Atomic[Int64]](1)
+    count_ptr[] = Atomic[Int64](Int64(0))
     var sink = ImageSink(count_ptr)
     var pipeline = Pipeline((parallel(source, src_degree), parallel(alt1, alternate_degree_1), parallel(alt2, alternate_degree_2), parallel(sink, sink_degree)))
     pipeline.setPinning(True)
     var t0 = perf_counter_ns()
-    pipeline.run_cooperative(n_workers, ready_queue_kind)
+    pipeline.run_cooperative(n_workers, ready_queue_kind, max_consume_rounds)
     var ms = elapsed_ms(t0)
     var n = Int(count_ptr[].load[ordering=Ordering.ACQUIRE]())
     count_ptr.unsafe_deinit_pointee()
@@ -69,8 +70,8 @@ def run_config(src_degree: Int,
 # Main
 def main():
     var args = argv()
-    if len(args) < 6 or len(args) > 7:
-        print("Usage: ./test_image_coop <Source> <Alternate1> <Alternate2> <Sink> <Workers> [mpmc|work-stealing]")
+    if len(args) < 6 or len(args) > 8:
+        print("Usage: ./test_image_coop <Source> <Alternate1> <Alternate2> <Sink> <Workers> [mpmc|work-stealing|0|1] [max_consume_rounds]")
         return
     try:
         var src_degree = Int(args[1])
@@ -79,20 +80,24 @@ def main():
         var sink_degree = Int(args[4])
         var n_workers = Int(args[5])
         var ready_queue_kind = ReadyQueueKind.MPMC
-        if len(args) == 7:
-            if args[6] == "work-stealing":
+        var max_consume_rounds = 1
+        if len(args) == 7 or len(args) == 8:
+            if args[6] == "work-stealing" or args[6] == "1":
                 ready_queue_kind = ReadyQueueKind.WORK_STEALING
-            elif args[6] != "mpmc":
+            elif args[6] != "mpmc" and args[6] != "0":
                 print("Invalid ready queue kind: ", args[6])
                 return
+            if len(args) == 8:
+                max_consume_rounds = Int(args[7])
         print("  Image processing pipeline in Mojo: Source -> AlternatingFilterStage -> AlternatingFilterStage -> Sink")
         print("  Configuration: Source=" + String(src_degree) + " Alternate1=" + String(alternate_degree_1) + " Alternate2=" + String(alternate_degree_2) + " Sink=" + String(sink_degree) + " Workers=" + String(n_workers))
         var res = run_config(src_degree,
                             alternate_degree_1,
-            alternate_degree_2,
+                            alternate_degree_2,
                             sink_degree,
                             n_workers,
-                            ready_queue_kind)
+                            ready_queue_kind,
+                            max_consume_rounds)
         var n = res[0]; var ms = res[1]
         var tput = throughput(n, ms)
         print("Elapsed time: " + String(ms) + " ms")

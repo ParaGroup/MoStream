@@ -28,8 +28,8 @@ from std.sys import argv
 from std.memory.alloc import unsafe_alloc
 from std.memory import Pointer
 
-comptime W: Int = 32
-comptime H: Int = 32
+comptime W: Int = 512
+comptime H: Int = 512
 comptime DURATION: Int = 60
 comptime BASELINE_N: Int = 5000
 
@@ -47,8 +47,8 @@ def run_config(src_degree: Int, alternate_degree_1: Int, alternate_degree_2: Int
     var source = TimedImageSource[W, H, DURATION]()
     var alt1 = AlternatingFilterStage[DURATION](True)
     var alt2 = AlternatingFilterStage[DURATION](False)
-    var count_ptr = unsafe_alloc[Atomic[DType.int64]](1)
-    count_ptr[] = Atomic[DType.int64](Int64(0))
+    var count_ptr = unsafe_alloc[Atomic[Int64]](1)
+    count_ptr[] = Atomic[Int64](Int64(0))
     var sink = ImageSink(count_ptr)
     var pipeline = Pipeline((parallel(source, src_degree), parallel(alt1, alternate_degree_1), parallel(alt2, alternate_degree_2), parallel(sink, sink_degree)))
     pipeline.setPinning(True)

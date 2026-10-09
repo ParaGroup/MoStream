@@ -400,14 +400,14 @@ struct AlternatingFilterStage[DurationSec: Int = 120](StageTrait):
             self.started = True
         if self.firstHalf:
             if perf_counter_ns() - self.start_ns >= (Int(Self.DurationSec) // 2) * 1_000_000_000:
-                    return self.blur.compute(input^)
-                else:
-                    return self.sharpen.compute(input^)
+                return self.blur.compute(input^)
+            else:
+                return self.sharpen.compute(input^)
         else:
             if perf_counter_ns() - self.start_ns >= (Int(Self.DurationSec) // 2) * 1_000_000_000:
-                    return self.sharpen.compute(input^)
-                else:
-                    return self.blur.compute(input^)
+                return self.sharpen.compute(input^)
+            else:
+                return self.blur.compute(input^)
 
     # handle received EOS
     def received_eos(mut self):
@@ -422,10 +422,10 @@ struct ImageSink(StageTrait):
     var count: Int
     var checksum_total: UInt64
     var start_ns: Int
-    var count_ptr: Pointer[Atomic[DType.int64], MutUntrackedOrigin]
+    var count_ptr: Pointer[Atomic[Int64], MutUntrackedOrigin]
 
     # constructor
-    def __init__(out self, count_ptr: Pointer[Atomic[DType.int64], MutUntrackedOrigin]):
+    def __init__(out self, count_ptr: Pointer[Atomic[Int64], MutUntrackedOrigin]):
         self.count = 0
         self.checksum_total = 0
         self.start_ns = 0

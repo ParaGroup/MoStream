@@ -21,13 +21,13 @@ from std.sys.info import size_of
 # Cache-line padding keeps the independently modified top and bottom indexes from sharing a cache line
 struct PaddedAtomicI64:
     comptime CACHE_LINE_SIZE_BYTES = 64
-    comptime PAD_BYTES = Self.CACHE_LINE_SIZE_BYTES - size_of[Atomic[DType.int64]]()
-    var atomic_value: Atomic[DType.int64]
+    comptime PAD_BYTES = Self.CACHE_LINE_SIZE_BYTES - size_of[Atomic[Int64]]()
+    var atomic_value: Atomic[Int64]
     var padding: Array[UInt8, Self.PAD_BYTES]
 
     # constructor
     def __init__(out self, initial: Int64):
-        self.atomic_value = Atomic[DType.int64](initial)
+        self.atomic_value = Atomic[Int64](initial)
         self.padding = Array[UInt8, Self.PAD_BYTES](uninitialized=True)
 
 # Result returned by pop_bottom and steal_top
@@ -65,7 +65,7 @@ struct WorkStealResult(ImplicitlyCopyable):
 
 # Fixed-capacity Chase-Lev work-stealing deque
 struct WorkStealingDeque(Movable):
-    var buffer: Pointer[Atomic[DType.int64], MutUntrackedOrigin]
+    var buffer: Pointer[Atomic[Int64], MutUntrackedOrigin]
     var capacity: Int64
     var mask: Int64
     var top: PaddedAtomicI64
@@ -77,11 +77,11 @@ struct WorkStealingDeque(Movable):
             raise Error("WorkStealingDeque capacity must be a power of two and at least 2")
         self.capacity = Int64(capacity)
         self.mask = Int64(capacity - 1)
-        self.buffer = unsafe_alloc[Atomic[DType.int64]](capacity)
+        self.buffer = unsafe_alloc[Atomic[Int64]](capacity)
         self.top = PaddedAtomicI64(0)
         self.bottom = PaddedAtomicI64(0)
         for i in range(capacity):
-            self.buffer.unsafe_offset(i)[] = Atomic[DType.int64](-1)
+            self.buffer.unsafe_offset(i)[] = Atomic[Int64](-1)
 
     # move constructor
     def __init__(out self, *, deinit move: Self):
@@ -107,17 +107,17 @@ struct WorkStealingDeque(Movable):
     @always_inline
     def _store_slot(mut self, logical_index: Int64, actor_id: Int64):
         var slot_index = Int(logical_index & self.mask)
-        Atomic[DType.int64].store[ordering=Ordering.RELAXED](Pointer(to=self.buffer.unsafe_offset(slot_index)[].value), actor_id)
+        self.buffer.unsafe_offset(slot_index)[].store[ordering=Ordering.RELAXED](actor_id)
 
     # update on the top index
     @always_inline
     def _store_top(mut self, value: Int64):
-        Atomic[DType.int64].store[ordering=Ordering.RELAXED](Pointer(to=self.top.atomic_value.value), value)
+        self.top.atomic_value.store[ordering=Ordering.RELAXED](value)
 
     # update on the bottom index
     @always_inline
     def _store_bottom(mut self, value: Int64):
-        Atomic[DType.int64].store[ordering=Ordering.RELAXED](Pointer(to=self.bottom.atomic_value.value), value)
+        self.bottom.atomic_value.store[ordering=Ordering.RELAXED](value)
 
     # returns false when the fixed-capacity deque is full (owner-only)
     def push_bottom(mut self, actor_id: Int64) -> Bool:

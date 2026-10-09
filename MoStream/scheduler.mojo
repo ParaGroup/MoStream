@@ -20,7 +20,7 @@ from MoStream.actor import ActorStatus
 from MoStream.pipeline import CoresList, pin_thread_to_cpu
 from MoStream.node import NodeTrait, SeqNode, ParallelNode
 from MoStream.utils import print_cyan_color, print_red_color, print_yellow_color
-from std.runtime.asyncrt import create_task, TaskGroup, parallelism_level
+from std.runtime._asyncrt import TaskGroup
 from std.sys.terminate import exit
 from std.memory.alloc import unsafe_alloc
 from std.memory import Pointer
@@ -46,9 +46,9 @@ struct Scheduler[ReadyQueues: ReadyQueueBackend, *Ts: NodeTrait]:
     var actor_descriptors: Pointer[ActorDescriptor, MutUntrackedOrigin] # array of actor descriptors indexed by flat actor ID
     var wq_inputs: Pointer[MPMCQueue[ActorDescriptor], MutUntrackedOrigin] # array of wait queues for actors waiting on input
     var wq_outputs: Pointer[MPMCQueue[ActorDescriptor], MutUntrackedOrigin] # array of wait queues for actors waiting on output
-    var actor_states: Pointer[Atomic[DType.uint64], MutUntrackedOrigin] # array of atomic variables representing the state of each actor
-    var done_count: Pointer[Atomic[DType.uint64], MutUntrackedOrigin] # counter of actors that have finished execution
-    var actor_busy: Pointer[Atomic[DType.uint64], MutUntrackedOrigin] # array of atomic flags to protect parking logic
+    var actor_states: Pointer[Atomic[UInt64], MutUntrackedOrigin] # array of atomic variables representing the state of each actor
+    var done_count: Pointer[Atomic[UInt64], MutUntrackedOrigin] # counter of actors that have finished execution
+    var actor_busy: Pointer[Atomic[UInt64], MutUntrackedOrigin] # array of atomic flags to protect parking logic
 
     # constructor
     def __init__(out self, mut nodes: Tuple[*Self.Ts], num_workers: Int, var ready_queues: Self.ReadyQueues) raises:
@@ -69,14 +69,14 @@ struct Scheduler[ReadyQueues: ReadyQueueBackend, *Ts: NodeTrait]:
         for i in range(self.num_stages):
             self.wq_inputs.unsafe_offset(i).unsafe_write(MPMCQueue[ActorDescriptor](1048576)) # how to compute this size?
             self.wq_outputs.unsafe_offset(i).unsafe_write(MPMCQueue[ActorDescriptor](1048576)) # how to compute this size?
-        self.actor_states = unsafe_alloc[Atomic[DType.uint64]](self.total_actors)
+        self.actor_states = unsafe_alloc[Atomic[UInt64]](self.total_actors)
         for i in range(self.total_actors):
-            self.actor_states.unsafe_offset(i)[] = Atomic[DType.uint64](ActorStatus.READY)
-        self.done_count = unsafe_alloc[Atomic[DType.uint64]](1)
-        self.done_count[] = Atomic[DType.uint64](0)
-        self.actor_busy = unsafe_alloc[Atomic[DType.uint64]](self.total_actors)
+            self.actor_states.unsafe_offset(i)[] = Atomic[UInt64](ActorStatus.READY)
+        self.done_count = unsafe_alloc[Atomic[UInt64]](1)
+        self.done_count[] = Atomic[UInt64](0)
+        self.actor_busy = unsafe_alloc[Atomic[UInt64]](self.total_actors)
         for i in range(self.total_actors):
-            self.actor_busy.unsafe_offset(i)[] = Atomic[DType.uint64](0)
+            self.actor_busy.unsafe_offset(i)[] = Atomic[UInt64](0)
 
     # destructor
     def __deinit__(deinit self):
@@ -109,12 +109,12 @@ struct Scheduler[ReadyQueues: ReadyQueueBackend, *Ts: NodeTrait]:
             self.schedule_actor(self.actor_descriptors.unsafe_offset(flat_id)[], flat_id % self.num_workers)
 
     # start the scheduler in cooperative mode
-    def start(mut self, mut nodes: Tuple[*Self.Ts], mut coreslist: CoresList):
+    def start(mut self, mut nodes: Tuple[*Self.Ts], mut coreslist: CoresList, max_consume_rounds: Int):
         self.enqueue_all_actors()
         var tg = TaskGroup()
         for worker_id in range(0, self.num_workers):
             var core_id = coreslist.get_next_core_id()
-            var task = self.worker_loop(nodes, worker_id, core_id)
+            var task = self.worker_loop(nodes, worker_id, core_id, max_consume_rounds)
             tg.create_task(task^)
         tg.wait()
 
@@ -402,7 +402,7 @@ struct Scheduler[ReadyQueues: ReadyQueueBackend, *Ts: NodeTrait]:
         return None
 
     # main worker loop
-    async def worker_loop(mut self, mut nodes: Tuple[*Self.Ts], worker_id: Int, core_id: Int):
+    async def worker_loop(mut self, mut nodes: Tuple[*Self.Ts], worker_id: Int, core_id: Int, max_consume_rounds: Int):
         try:
             # pinning of the underlying thread if pinning is enabled
             _ = pin_thread_to_cpu(core_id)
@@ -416,12 +416,11 @@ struct Scheduler[ReadyQueues: ReadyQueueBackend, *Ts: NodeTrait]:
                 if not self.try_start_actor(actor):
                     continue
                 self.spin_until_not_busy(actor) # to avoid inter-mixing with the parking logic
-                var max_rounds = 1 # rounds represent a sort of quantum assigned to a ready actor
-                for i in range(max_rounds):
+                for i in range(max_consume_rounds):
                     var result = self.process_actor(nodes, actor)
                     if result == ActorStatus.READY:
                         self.notify_after_ready(nodes, actor, worker_id)
-                        if (i == max_rounds - 1):
+                        if (i == max_consume_rounds - 1):
                             self.mark_from_running_to_ready(actor, worker_id)
                     elif result == ActorStatus.BLOCKED_INPUT:
                         self.notify_after_blocked_input(nodes, actor, worker_id)
@@ -441,4 +440,3 @@ struct Scheduler[ReadyQueues: ReadyQueueBackend, *Ts: NodeTrait]:
         except e:
             print("Raised: " + String(e))
             exit(1)
-

@@ -13,7 +13,7 @@
 #  Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
 # ===------------------------------------------------------------------------=== #
 
-from std.runtime.asyncrt import create_task, TaskGroup, parallelism_level
+from std.runtime._asyncrt import TaskGroup
 from MoStream.communicator import MessageTrait, Communicator
 from MoStream.node import NodeTrait, seq, parallel
 from MoStream.emitter import Emitter
@@ -136,7 +136,8 @@ struct Pipeline[*Ts: NodeTrait]:
             print_red_color("{MoStream} Error: run() or run_cooperative() method can be called only once for each pipeline instance!")
             raise Error("error in run()")
         self.alreadyRun = True
-        if (self.getNumNodes() > parallelism_level()):
+        var mp = Python.import_module("multiprocessing")
+        if (self.getNumNodes() > Int(py=mp.cpu_count())):
             print_red_color("{MoStream} Error: the number of nodes in the pipeline is greater than the number threads available in the thread pool!")
             raise Error("error in run()")
         var pinning = "disabled"
@@ -173,12 +174,14 @@ struct Pipeline[*Ts: NodeTrait]:
     # run_cooperative
     def run_cooperative(mut self,
                         n_workers: Int,
-                        ready_queue_kind: Int = ReadyQueueKind.MPMC) raises:
+                        ready_queue_kind: Int = ReadyQueueKind.MPMC,
+                        max_consume_rounds: Int = 1) raises:
         if (self.alreadyRun):
             print_red_color("{MoStream} Error: run() or run_cooperative() method can be called only once for each pipeline instance!")
             raise Error("error in run()")
         self.alreadyRun = True
-        if (n_workers > parallelism_level()):
+        var mp = Python.import_module("multiprocessing")
+        if (n_workers > Int(py=mp.cpu_count())):
             print_red_color("{MoStream} Error: the number of workers of the cooperative scheduler is greater than the number threads available in the thread pool!")
             raise Error("error in run_cooperative()")
         if (n_workers <= 0):
@@ -208,11 +211,11 @@ struct Pipeline[*Ts: NodeTrait]:
         if ready_queue_kind == ReadyQueueKind.MPMC:
             var ready_queues = MPMCReadyQueues(n_workers, ready_queue_size)
             var scheduler = Scheduler(self.nodes, n_workers, ready_queues^)
-            scheduler.start(self.nodes, self.coreslist)
+            scheduler.start(self.nodes, self.coreslist, max_consume_rounds)
         else:
             var ready_queues = WorkStealingReadyQueues(n_workers, ready_queue_size)
             var scheduler = Scheduler(self.nodes, n_workers, ready_queues^)
-            scheduler.start(self.nodes, self.coreslist)
+            scheduler.start(self.nodes, self.coreslist, max_consume_rounds)
         print_cyan_color("{MoStream} ...terminated successfully!")    
 
     # enable/disable pinning for the pipeline threads
